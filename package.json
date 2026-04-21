@@ -1,0 +1,52 @@
+{
+  "name": "neo-ai-agent",
+  "version": "1.0.0",
+  "description": "Production-style CLI AI agent for the Neo X blockchain built with Node.js and TypeScript.",
+  "bin": {
+    "neo-ai-agent": "dist/index.js"
+  },
+  "main": "dist/index.js",
+  "license": "MIT",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx watch src/index.ts",
+    "dev:api": "tsx watch src/server.ts",
+    "cli": "tsx src/index.ts",
+    "api": "tsx src/server.ts",
+    "start": "node dist/index.js",
+    "start:api": "node dist/server.js",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint . --ext .ts",
+    "format": "prettier --write .",
+    "format:check:ci": "prettier --check .",
+    "test": "jest --runInBand",
+    "test:watch": "jest --watch",
+    "verify": "npm run lint && npm run typecheck && npm run test && npm run format:check:ci"
+  },
+  "dependencies": {
+    "@cityofzion/neon-api": "^5.8.1",
+    "@cityofzion/neon-core": "^5.8.1",
+    "@cityofzion/neon-js": "^5.8.1",
+    "@google/genai": "^1.46.0",
+    "commander": "^14.0.1",
+    "dotenv": "^16.6.1",
+    "ethers": "^6.15.0",
+    "openai": "^6.32.0",
+    "pino": "^10.1.0",
+    "zod": "^4.1.5"
+  },
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/node": "^24.3.0",
+    "@typescript-eslint/eslint-plugin": "^8.43.0",
+    "@typescript-eslint/parser": "^8.43.0",
+    "eslint": "^9.35.0",
+    "eslint-config-prettier": "^10.1.8",
+    "jest": "^30.1.3",
+    "prettier": "^3.6.2",
+    "ts-jest": "^29.4.1",
+    "ts-node": "^10.9.2",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2"
+  }
+}
