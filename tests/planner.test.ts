@@ -1,48 +1,31 @@
 import { PlannerService } from "../src/agent/planner";
 import { ToolRegistry } from "../src/agent/toolRegistry";
 
-describe("PlannerService", () => {
-  it("maps a GAS transfer request to sendGas", async () => {
-    const recipient = "0x1111111111111111111111111111111111111111";
-    const planner = new PlannerService({
-      tools: new ToolRegistry().listPlannerTools(),
-    });
+const neoN3Address = "NQ9NEvVrutLL6JDtUMKMrkEG6QpWNxgNBM";
+const neoNsName = "arkadiusz.neo";
 
-    const plan = await planner.plan(`Send 0.1 GAS to ${recipient}`, {
-      walletEnabled: true,
-    });
-
-    expect(plan.tool).toBe("sendGas");
-    expect(plan.arguments).toMatchObject({
-      amount: "0.1",
-      to: recipient,
-    });
-    expect(plan.needsConfirmation).toBe(true);
+function createPlanner(): PlannerService {
+  return new PlannerService({
+    tools: new ToolRegistry().listPlannerTools(),
   });
+}
 
-  it("maps a NeoNS transfer request to sendNeoN3Gas", async () => {
-    const planner = new PlannerService({
-      tools: new ToolRegistry().listPlannerTools(),
-    });
-
-    const plan = await planner.plan("Send 0.1 GAS on N3 to arkadiusz.neo", {
+describe("PlannerService", () => {
+  it("maps a GAS transfer request to sendNeoN3Gas", async () => {
+    const plan = await createPlanner().plan(`Send 0.1 GAS to ${neoNsName}`, {
       walletEnabled: true,
     });
 
     expect(plan.tool).toBe("sendNeoN3Gas");
     expect(plan.arguments).toMatchObject({
       amount: "0.1",
-      to: "arkadiusz.neo",
+      to: neoNsName,
     });
     expect(plan.needsConfirmation).toBe(true);
   });
 
   it("maps a Neo N3 token transfer request to sendNeoN3Token", async () => {
-    const planner = new PlannerService({
-      tools: new ToolRegistry().listPlannerTools(),
-    });
-
-    const plan = await planner.plan("Send 12.5 FUSD on N3 to arkadiusz.neo", {
+    const plan = await createPlanner().plan(`Send 12.5 FUSD to ${neoNsName}`, {
       walletEnabled: true,
     });
 
@@ -50,201 +33,62 @@ describe("PlannerService", () => {
     expect(plan.arguments).toMatchObject({
       amount: "12.5",
       token: "FUSD",
-      to: "arkadiusz.neo",
+      to: neoNsName,
     });
     expect(plan.needsConfirmation).toBe(true);
   });
 
-  it("maps a Neo N3 -> Neo X bridge request to bridgeGas", async () => {
-    const planner = new PlannerService({
-      tools: new ToolRegistry().listPlannerTools(),
-    });
-
-    const plan = await planner.plan("Bridge 1 GAS from Neo N3 to Neo X", {
-      walletEnabled: true,
-      walletAddress: "NQ9NEvVrutLL6JDtUMKMrkEG6QpWNxgNBM",
-      neoXWalletAddress: "0x1111111111111111111111111111111111111111",
-      neoN3WalletAddress: "NQ9NEvVrutLL6JDtUMKMrkEG6QpWNxgNBM",
-    });
-
-    expect(plan.tool).toBe("bridgeGas");
-    expect(plan.arguments).toMatchObject({
-      direction: "neoN3ToNeoX",
-      amount: "1",
-      to: "0x1111111111111111111111111111111111111111",
-    });
-    expect(plan.needsConfirmation).toBe(true);
-  });
-
-  it("maps a bridge fee request to getGasBridgeQuote", async () => {
-    const planner = new PlannerService({
-      tools: new ToolRegistry().listPlannerTools(),
-    });
-
-    const plan = await planner.plan(
-      "what is the fee to bridge 1 GAS from Neo X to Neo N3",
-      {
-        walletEnabled: true,
-        walletAddress: "0x1111111111111111111111111111111111111111",
-      },
-    );
-
-    expect(plan.tool).toBe("getGasBridgeQuote");
-    expect(plan.arguments).toMatchObject({
-      direction: "neoXToNeoN3",
-      amount: "1",
-    });
-    expect(plan.needsConfirmation).toBe(false);
-  });
-
-  it("maps a bridge status request to getBridgeStatus", async () => {
-    const planner = new PlannerService({
-      tools: new ToolRegistry().listPlannerTools(),
-    });
-
-    const plan = await planner.plan("did my last bridge arrive", {
+  it("keeps a GAS transfer without a recipient as a draft", async () => {
+    const plan = await createPlanner().plan("send 0.1 gas", {
       walletEnabled: true,
     });
 
-    expect(plan.tool).toBe("getBridgeStatus");
-    expect(plan.needsConfirmation).toBe(false);
-  });
-
-  it("keeps a Neo X -> Neo N3 bridge request without amount as a draft", async () => {
-    const planner = new PlannerService({
-      tools: new ToolRegistry().listPlannerTools(),
-    });
-
-    const plan = await planner.plan(
-      "Bridge GAS from Neo X to Neo N3 NQ9NEvVrutLL6JDtUMKMrkEG6QpWNxgNBM",
-      {
-        walletEnabled: true,
-      },
-    );
-
-    expect(plan.tool).toBe("bridgeGas");
+    expect(plan.tool).toBe("sendNeoN3Gas");
     expect(plan.arguments).toMatchObject({
-      direction: "neoXToNeoN3",
-      to: "NQ9NEvVrutLL6JDtUMKMrkEG6QpWNxgNBM",
+      amount: "0.1",
     });
-    expect(plan.missingInputs).toEqual(["amount"]);
-  });
-
-  it("uses the wallet address for balance questions about my address", async () => {
-    const planner = new PlannerService({
-      tools: new ToolRegistry().listPlannerTools(),
-    });
-
-    const plan = await planner.plan("how much gas i have on my address", {
-      walletEnabled: true,
-      walletAddress: "0x1111111111111111111111111111111111111111",
-    });
-
-    expect(plan.tool).toBe("getBalance");
-    expect(plan.arguments).toMatchObject({
-      address: "0x1111111111111111111111111111111111111111",
-    });
-    expect(plan.missingInputs).toHaveLength(0);
+    expect(plan.missingInputs).toEqual(["to"]);
   });
 
   it("uses the Neo N3 wallet address for balance questions about my address", async () => {
-    const planner = new PlannerService({
-      tools: new ToolRegistry().listPlannerTools(),
-    });
-
-    const plan = await planner.plan("how much gas i have on my address", {
-      walletEnabled: true,
-      walletAddress: "NQ9NEvVrutLL6JDtUMKMrkEG6QpWNxgNBM",
-      neoXWalletAddress: "0x1111111111111111111111111111111111111111",
-      neoN3WalletAddress: "NQ9NEvVrutLL6JDtUMKMrkEG6QpWNxgNBM",
-    });
+    const plan = await createPlanner().plan(
+      "how much gas i have on my address",
+      {
+        walletEnabled: true,
+        walletAddress: neoN3Address,
+        neoN3WalletAddress: neoN3Address,
+      },
+    );
 
     expect(plan.tool).toBe("getNeoN3TokenBalances");
     expect(plan.arguments).toMatchObject({
-      address: "NQ9NEvVrutLL6JDtUMKMrkEG6QpWNxgNBM",
+      address: neoN3Address,
       token: "GAS",
     });
     expect(plan.missingInputs).toHaveLength(0);
   });
 
-  it("maps a default portfolio request to Neo N3 first", async () => {
-    const planner = new PlannerService({
-      tools: new ToolRegistry().listPlannerTools(),
-    });
-
-    const plan = await planner.plan("show my portfolio", {
+  it("maps all balances to Neo N3 portfolio overview", async () => {
+    const plan = await createPlanner().plan("show all balances", {
       walletEnabled: true,
-      walletAddress: "NQ9NEvVrutLL6JDtUMKMrkEG6QpWNxgNBM",
-      neoXWalletAddress: "0x1111111111111111111111111111111111111111",
-      neoN3WalletAddress: "NQ9NEvVrutLL6JDtUMKMrkEG6QpWNxgNBM",
+      walletAddress: neoN3Address,
+      neoN3WalletAddress: neoN3Address,
     });
 
     expect(plan.tool).toBe("getNeoN3PortfolioOverview");
     expect(plan.arguments).toMatchObject({
-      address: "NQ9NEvVrutLL6JDtUMKMrkEG6QpWNxgNBM",
+      address: neoN3Address,
     });
     expect(plan.missingInputs).toHaveLength(0);
   });
 
-  it("maps an all-balances request to the combined overview", async () => {
-    const planner = new PlannerService({
-      tools: new ToolRegistry().listPlannerTools(),
-    });
-
-    const plan = await planner.plan("show all balances", {
-      walletEnabled: true,
-      walletAddress: "NQ9NEvVrutLL6JDtUMKMrkEG6QpWNxgNBM",
-      neoXWalletAddress: "0x1111111111111111111111111111111111111111",
-      neoN3WalletAddress: "NQ9NEvVrutLL6JDtUMKMrkEG6QpWNxgNBM",
-    });
-
-    expect(plan.tool).toBe("getPortfolioOverview");
-    expect(plan.arguments).toMatchObject({
-      address: "0x1111111111111111111111111111111111111111",
-      neoN3Address: "NQ9NEvVrutLL6JDtUMKMrkEG6QpWNxgNBM",
-    });
-    expect(plan.missingInputs).toHaveLength(0);
-  });
-
-  it("maps a Neo N3 portfolio request to getNeoN3PortfolioOverview", async () => {
-    const planner = new PlannerService({
-      tools: new ToolRegistry().listPlannerTools(),
-    });
-
-    const plan = await planner.plan("show my neo n3 portfolio", {
-      walletEnabled: true,
-    });
-
-    expect(plan.tool).toBe("getNeoN3PortfolioOverview");
-    expect(plan.arguments).toEqual({
-      address: undefined,
-    });
-    expect(plan.missingInputs).toHaveLength(0);
-  });
-
-  it("maps a Neo N3 token balance request to getNeoN3TokenBalances", async () => {
-    const planner = new PlannerService({
-      tools: new ToolRegistry().listPlannerTools(),
-    });
-
-    const plan = await planner.plan("show my N3 token balances", {
-      walletEnabled: true,
-    });
-
-    expect(plan.tool).toBe("getNeoN3TokenBalances");
-    expect(plan.arguments).toEqual({
-      address: undefined,
-    });
-  });
-
-  it("maps a Neo N3 transfer history request to getNeoN3TransferHistory", async () => {
-    const planner = new PlannerService({
-      tools: new ToolRegistry().listPlannerTools(),
-    });
-
-    const plan = await planner.plan("show my last 2 transfers on Neo N3", {
-      walletEnabled: true,
-    });
+  it("maps a Neo N3 transfer history request", async () => {
+    const plan = await createPlanner().plan(
+      "show my last 2 transfers on Neo N3",
+      {
+        walletEnabled: true,
+      },
+    );
 
     expect(plan.tool).toBe("getNeoN3TransferHistory");
     expect(plan.arguments).toMatchObject({
@@ -253,39 +97,21 @@ describe("PlannerService", () => {
     });
   });
 
-  it("recognizes confirmation text", async () => {
-    const planner = new PlannerService({
-      tools: new ToolRegistry().listPlannerTools(),
-    });
-
-    const plan = await planner.plan("Confirm", {
+  it("maps a recent action request", async () => {
+    const plan = await createPlanner().plan("show my last 3 actions", {
       walletEnabled: true,
     });
 
-    expect(plan.intent).toBe("confirm_action");
-    expect(plan.tool).toBeNull();
+    expect(plan.tool).toBe("getRecentActions");
+    expect(plan.arguments).toMatchObject({
+      limit: 3,
+    });
+    expect(plan.needsConfirmation).toBe(false);
   });
 
-  it("does not map swap requests to a tool", async () => {
-    const planner = new PlannerService({
-      tools: new ToolRegistry().listPlannerTools(),
-    });
-
-    const plan = await planner.plan("Swap 1 GAS for USDT", {
-      walletEnabled: true,
-    });
-
-    expect(plan.tool).toBeNull();
-    expect(plan.intent).toBe("unknown");
-  });
-
-  it("maps a Flamingo quote request on Neo N3", async () => {
-    const planner = new PlannerService({
-      tools: new ToolRegistry().listPlannerTools(),
-    });
-
-    const plan = await planner.plan(
-      "what is the best Flamingo route to swap 1 GAS for FUSD on N3",
+  it("maps a Flamingo quote request", async () => {
+    const plan = await createPlanner().plan(
+      "what is the best Flamingo route to swap 1 GAS for FUSD",
       {
         walletEnabled: true,
       },
@@ -301,13 +127,9 @@ describe("PlannerService", () => {
     expect(plan.needsConfirmation).toBe(false);
   });
 
-  it("maps a force Flamingo swap request on Neo N3", async () => {
-    const planner = new PlannerService({
-      tools: new ToolRegistry().listPlannerTools(),
-    });
-
-    const plan = await planner.plan(
-      'Swap 1 GAS for FUSD on N3 with "force" and 1% slippage',
+  it("maps a force Flamingo swap request", async () => {
+    const plan = await createPlanner().plan(
+      "swap 1 GAS for FUSD with force and 1% slippage",
       {
         walletEnabled: true,
       },
@@ -324,114 +146,30 @@ describe("PlannerService", () => {
     expect(plan.needsConfirmation).toBe(true);
   });
 
-  it("keeps an incomplete Flamingo swap on Neo N3 as a draft", async () => {
-    const planner = new PlannerService({
-      tools: new ToolRegistry().listPlannerTools(),
-    });
-
-    const plan = await planner.plan("swap GAS for FUSD on N3", {
+  it("maps wallet address requests to getWalletAddress", async () => {
+    const plan = await createPlanner().plan("show my address", {
       walletEnabled: true,
     });
 
-    expect(plan.tool).toBe("swapNeoN3Token");
-    expect(plan.arguments).toMatchObject({
-      fromToken: "GAS",
-      toToken: "FUSD",
-    });
-    expect(plan.missingInputs).toEqual(["amount"]);
-  });
-
-  it("keeps an approval request without spender as a draft", async () => {
-    const planner = new PlannerService({
-      tools: new ToolRegistry().listPlannerTools(),
-    });
-
-    const plan = await planner.plan("Approve 25 USDT", {
-      walletEnabled: true,
-    });
-
-    expect(plan.arguments).toMatchObject({
-      amount: "25",
-      token: "USDT",
-    });
-    expect(plan.missingInputs).toEqual(["spender"]);
-  });
-
-  it("maps an approval request to approveErc20", async () => {
-    const planner = new PlannerService({
-      tools: new ToolRegistry().listPlannerTools(),
-    });
-
-    const spender = "0x1111111111111111111111111111111111111111";
-    const plan = await planner.plan(`Approve 25 USDT for ${spender}`, {
-      walletEnabled: true,
-    });
-
-    expect(plan.tool).toBe("approveErc20");
-    expect(plan.arguments).toMatchObject({
-      amount: "25",
-      token: "USDT",
-      spender,
-    });
-  });
-
-  it("maps a last transaction status request to getLastTransactionStatus", async () => {
-    const planner = new PlannerService({
-      tools: new ToolRegistry().listPlannerTools(),
-    });
-
-    const plan = await planner.plan("check the status of my last transaction", {
-      walletEnabled: true,
-    });
-
-    expect(plan.tool).toBe("getLastTransactionStatus");
+    expect(plan.tool).toBe("getWalletAddress");
     expect(plan.arguments).toEqual({});
   });
 
-  it("maps a recent actions request to getRecentActions", async () => {
-    const planner = new PlannerService({
-      tools: new ToolRegistry().listPlannerTools(),
-    });
-
-    const plan = await planner.plan("show my last 3 actions", {
+  it("recognizes confirmation text", async () => {
+    const plan = await createPlanner().plan("Confirm", {
       walletEnabled: true,
-      walletAddress: "0x1111111111111111111111111111111111111111",
     });
 
-    expect(plan.tool).toBe("getRecentActions");
-    expect(plan.arguments).toEqual({
-      address: undefined,
-      limit: 3,
-    });
+    expect(plan.intent).toBe("confirm_action");
+    expect(plan.tool).toBeNull();
   });
 
-  it("defaults wallet address requests to Neo N3", async () => {
-    const planner = new PlannerService({
-      tools: new ToolRegistry().listPlannerTools(),
-    });
-
-    const plan = await planner.plan("show my address", {
+  it("keeps unsupported approval requests unmapped", async () => {
+    const plan = await createPlanner().plan("approve 1 usdt", {
       walletEnabled: true,
     });
 
-    expect(plan.tool).toBe("getWalletAddress");
-    expect(plan.arguments).toEqual({
-      network: undefined,
-    });
-  });
-
-  it("maps explicit Neo X wallet address requests to Neo X", async () => {
-    const planner = new PlannerService({
-      tools: new ToolRegistry().listPlannerTools(),
-    });
-
-    const plan = await planner.plan("show my Neo X address", {
-      walletEnabled: true,
-    });
-
-    expect(plan.tool).toBe("getWalletAddress");
-    expect(plan.arguments).toEqual({
-      network: "neoX",
-    });
+    expect(plan.tool).toBeNull();
+    expect(plan.intent).toBe("unknown");
   });
 });

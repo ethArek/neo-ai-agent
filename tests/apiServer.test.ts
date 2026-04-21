@@ -62,7 +62,7 @@ async function closeServer(server: Server): Promise<void> {
 }
 
 describe("REST API server", () => {
-  it("returns the available tools when authorized", async () => {
+  it("returns the available Neo N3 tools when authorized", async () => {
     const setup = await createTestServer();
 
     try {
@@ -76,7 +76,7 @@ describe("REST API server", () => {
       };
 
       expect(response.status).toBe(200);
-      expect(payload.tools.some((tool) => tool.name === "approveErc20")).toBe(
+      expect(payload.tools.some((tool) => tool.name === "sendNeoN3Gas")).toBe(
         true,
       );
     } finally {
@@ -112,15 +112,14 @@ describe("REST API server", () => {
     }
   });
 
-  it("prepares and confirms an ERC-20 approval through HTTP", async () => {
+  it("prepares and confirms a Neo N3 GAS transfer through HTTP", async () => {
     const setup = await createTestServer();
-    const spender = "0x1111111111111111111111111111111111111111";
-    const prepareSpy = jest.spyOn(setup.provider, "prepareErc20Approval");
+    const prepareSpy = jest.spyOn(setup.provider, "prepareNeoN3GasTransfer");
     const signSpy = jest.spyOn(setup.provider, "signAndBroadcast");
 
     try {
       const prepareResponse = await fetch(
-        `${setup.baseUrl}/api/tools/approveErc20`,
+        `${setup.baseUrl}/api/tools/sendNeoN3Gas`,
         {
           method: "POST",
           headers: {
@@ -129,9 +128,8 @@ describe("REST API server", () => {
           },
           body: JSON.stringify({
             arguments: {
-              token: "USDT",
-              amount: "1",
-              spender,
+              amount: "0.1",
+              to: setup.provider.neoNsName,
             },
           }),
         },
@@ -146,11 +144,10 @@ describe("REST API server", () => {
 
       expect(prepareResponse.status).toBe(200);
       expect(preparedPayload.requiresConfirmation).toBe(true);
-      expect(preparedPayload.result.action).toBe("approveErc20");
+      expect(preparedPayload.result.action).toBe("sendNeoN3Gas");
       expect(prepareSpy).toHaveBeenCalledWith({
-        amount: "1",
-        token: "USDT",
-        spender,
+        amount: "0.1",
+        to: setup.provider.neoNsName,
       });
 
       const confirmResponse = await fetch(
@@ -170,9 +167,36 @@ describe("REST API server", () => {
       expect(confirmResponse.status).toBe(200);
       expect(confirmedPayload.requiresConfirmation).toBe(false);
       expect(confirmedPayload.message).toContain(
-        "Submitted an approval of 1 USDT",
+        "Submitted a Neo N3 GAS transfer",
       );
       expect(signSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      await closeServer(setup.server);
+    }
+  });
+
+  it("handles natural-language portfolio requests", async () => {
+    const setup = await createTestServer();
+
+    try {
+      const response = await fetch(`${setup.baseUrl}/api/messages`, {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer test-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          message: "show my portfolio",
+        }),
+      });
+      const payload = (await response.json()) as {
+        tool: string | null;
+        requiresConfirmation: boolean;
+      };
+
+      expect(response.status).toBe(200);
+      expect(payload.tool).toBe("getNeoN3PortfolioOverview");
+      expect(payload.requiresConfirmation).toBe(false);
     } finally {
       await closeServer(setup.server);
     }
@@ -200,35 +224,6 @@ describe("REST API server", () => {
 
       expect(response.status).toBe(404);
       expect(payload.error.code).toBe("NOT_FOUND");
-    } finally {
-      await closeServer(setup.server);
-    }
-  });
-
-  it("keeps swap requests unsupported through natural-language HTTP", async () => {
-    const setup = await createTestServer();
-
-    try {
-      const response = await fetch(`${setup.baseUrl}/api/messages`, {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer test-token",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          message: 'swap 1 GAS for USDT with "force"',
-        }),
-      });
-      const payload = (await response.json()) as {
-        message: string;
-        requiresConfirmation: boolean;
-        tool: string | null;
-      };
-
-      expect(response.status).toBe(200);
-      expect(payload.tool).toBeNull();
-      expect(payload.requiresConfirmation).toBe(false);
-      expect(payload.message).toContain("supported Neo N3 or Neo X action");
     } finally {
       await closeServer(setup.server);
     }

@@ -7,17 +7,6 @@ import {
   tx as neoTx,
   wallet as neoWallet,
 } from "@cityofzion/neon-js";
-import {
-  Contract,
-  Interface,
-  JsonRpcProvider,
-  Wallet,
-  formatUnits,
-  getAddress,
-  isAddress,
-  parseUnits,
-  type TransactionRequest,
-} from "ethers";
 
 import type { AppConfig } from "../core/config";
 import {
@@ -28,57 +17,31 @@ import {
   WalletUnavailableError,
 } from "../core/errors";
 import {
-  evmAddressSchema,
   hash160Schema,
   hash256Schema,
-  neoN3AddressSchema,
-  neoN3AddressOrNeoNsSchema,
   isNeoNsName,
+  neoN3AddressOrNeoNsSchema,
+  neoN3AddressSchema,
 } from "../core/validation";
 import { createBroadcastResult } from "./broadcast";
 import type {
   BlockReference,
-  BridgeQuote,
-  BridgeGasDirection,
-  BridgeStatus,
   BroadcastResult,
-  ContractWriteInput,
-  Erc20ApprovalInput,
-  Erc20TransferInput,
-  GasBridgeInput,
-  GasBridgeQuoteInput,
-  NeoProvider,
   NeoN3ContractWriteInput,
   NeoN3PortfolioOverview,
   NeoN3ReadInvocationResult,
   NeoN3SwapQuote,
   NeoN3SwapQuoteInput,
-  NeoN3TokenTransferInput,
   NeoN3TokenSwapInput,
+  NeoN3TokenTransferInput,
   NeoN3TransferHistory,
+  NeoProvider,
   PreparedTransaction,
-  PreparedTransactionRequest,
-  ReadInvocationResult,
   TokenBalance,
   TokenMetadata,
   TransactionDetails,
   TransactionStatus,
 } from "./types";
-
-const erc20Abi = [
-  "function symbol() view returns (string)",
-  "function decimals() view returns (uint8)",
-  "function name() view returns (string)",
-  "function balanceOf(address owner) view returns (uint256)",
-  "function allowance(address owner, address spender) view returns (uint256)",
-  "function transfer(address to, uint256 amount) returns (bool)",
-  "function approve(address spender, uint256 amount) returns (bool)",
-] as const;
-
-const neoXBridgeAbi = [
-  "function nativeBridge() view returns (bool paused, (uint256 nonce, bytes32 root) depositState, (uint256 nonce, bytes32 root) withdrawalState, (uint256 fee, uint256 minAmount, uint256 maxAmount, uint256 maxDeposits, uint256 decimalScalingFactor) config)",
-  "function withdrawNative(address _to, uint256 _maxFee) payable",
-] as const;
 
 const knownNeoN3TokenMetadataByContractHash: Readonly<
   Record<string, Pick<TokenMetadata, "symbol" | "decimals" | "name">>
@@ -113,16 +76,15 @@ const defaultNeoN3TestnetFlamingoRouterContract =
 interface PreparedTransactionInput {
   action: PreparedTransaction["action"];
   summary: string;
-  network?: "neoX";
+  transaction: InstanceType<typeof neoTx.Transaction>;
+  sender: string;
+  networkMagic: number;
   to: string;
-  data?: string;
-  value?: string;
   amount?: string;
   tokenAddress?: string;
   tokenSymbol?: string;
-  spender?: string;
   contractAddress?: string;
-  functionSignature?: string;
+  operation?: string;
   toTokenAddress?: string;
   toTokenSymbol?: string;
   amountOut?: string;
@@ -133,36 +95,7 @@ interface PreparedTransactionInput {
   tradingPairIds?: number[];
   deadlineMinutes?: number;
   deadlineTimestamp?: number;
-  bridgeDirection?: BridgeGasDirection;
-  destinationAddress?: string;
-  maxFee?: string;
-  estimatedReceived?: string;
-  minimumAmount?: string;
-  maximumAmount?: string;
-  bridgeEtaLowMinutes?: number;
-  bridgeEtaHighMinutes?: number;
-  bridgeContractAddress?: string;
-  allowedContracts?: string[];
-}
-
-interface ResolvedBridgeFee {
-  decimal: string;
-  raw: bigint;
-}
-
-interface ResolvedBridgeConfig extends ResolvedBridgeFee {
-  minimumAmount?: string;
-  minimumRaw?: bigint;
-  maximumAmount?: string;
-  maximumRaw?: bigint;
-  paused?: boolean;
-}
-
-interface ResolvedNeoN3SwapPath {
-  routeContracts: string[];
-  routeSymbols: string[];
-  tradingPairIds: number[];
-  routeAmountsRaw: bigint[];
+  allowedContracts: string[];
 }
 
 interface NeoN3FlamingoTradingPair {
@@ -193,12 +126,7 @@ interface NeoN3StructuredArgument {
 }
 
 const neoNsTextRecordType = "16";
-
-function ensureFunctionDeclaration(signature: string): string {
-  return signature.trim().startsWith("function ")
-    ? signature.trim()
-    : `function ${signature.trim()}`;
-}
+const decimalPattern = /^(?:0|[1-9]\d*)(?:\.\d+)?$/;
 
 function normalizeResult(value: unknown): unknown {
   if (typeof value === "bigint") {
@@ -221,6 +149,44 @@ function normalizeResult(value: unknown): unknown {
   return value;
 }
 
+function parseDecimalAmount(value: string, decimals: number): bigint {
+  const normalizedValue = value.trim();
+
+  if (!decimalPattern.test(normalizedValue)) {
+    throw new ValidationError(`Invalid decimal amount '${value}'.`);
+  }
+
+  const [wholePart, fractionalPart = ""] = normalizedValue.split(".");
+
+  if (fractionalPart.length > decimals) {
+    throw new ValidationError(
+      `Amount '${value}' exceeds the supported ${decimals} decimal places.`,
+    );
+  }
+
+  const paddedFraction = fractionalPart.padEnd(decimals, "0");
+  const combined = `${wholePart}${paddedFraction}`.replace(/^0+(?=\d)/, "");
+
+  return BigInt(combined === "" ? "0" : combined);
+}
+
+function formatDecimalAmount(value: bigint, decimals: number): string {
+  if (decimals === 0) {
+    return value.toString();
+  }
+
+  const negative = value < 0n;
+  const absolute = negative ? -value : value;
+  const digits = absolute.toString().padStart(decimals + 1, "0");
+  const wholePart = digits.slice(0, -decimals) || "0";
+  const fractionalPart = digits.slice(-decimals).replace(/0+$/, "");
+  const formatted = fractionalPart
+    ? `${wholePart}.${fractionalPart}`
+    : wholePart;
+
+  return negative ? `-${formatted}` : formatted;
+}
+
 function isNeoN3StructuredArgument(
   value: unknown,
 ): value is NeoN3StructuredArgument {
@@ -237,23 +203,14 @@ function isNeoN3StructuredArgument(
   );
 }
 
-export class NeoXProvider implements NeoProvider {
+export class NeoN3Provider implements NeoProvider {
   private readonly config: AppConfig;
-  private readonly provider: JsonRpcProvider;
-  private readonly wallet?: Wallet;
-  private readonly neoN3RpcClient?: InstanceType<typeof neoRpc.RPCClient>;
+  private readonly neoN3RpcClient: InstanceType<typeof neoRpc.RPCClient>;
   private readonly neoN3Wallet?: InstanceType<typeof neoWallet.Account>;
-  private readonly tokenMetadataCache = new Map<
-    string,
-    Promise<TokenMetadata>
-  >();
   private readonly neoN3TokenMetadataCache = new Map<
     string,
     Promise<TokenMetadata>
   >();
-  private readonly erc20Interface = new Interface(erc20Abi);
-  private readonly neoXBridgeInterface = new Interface(neoXBridgeAbi);
-  private chainIdPromise?: Promise<number>;
   private neoN3NetworkMagicPromise?: Promise<number>;
   private neoN3FlamingoTradingPairsPromise?: Promise<
     NeoN3FlamingoTradingPair[]
@@ -264,70 +221,16 @@ export class NeoXProvider implements NeoProvider {
 
   public constructor(config: AppConfig) {
     this.config = config;
-    this.provider = new JsonRpcProvider(config.neoXRpcUrl, config.neoXChainId);
-    this.wallet = config.walletPrivateKey
-      ? new Wallet(config.walletPrivateKey, this.provider)
-      : undefined;
-    this.neoN3RpcClient = config.neoN3.rpcUrl
-      ? new neoRpc.RPCClient(config.neoN3.rpcUrl)
-      : undefined;
+    this.neoN3RpcClient = new neoRpc.RPCClient(config.neoN3.rpcUrl);
     this.neoN3Wallet = config.neoN3.walletPrivateKey
       ? new neoWallet.Account(config.neoN3.walletPrivateKey)
       : undefined;
   }
 
-  public async validateAddress(address: string): Promise<boolean> {
-    return isAddress(address);
-  }
-
-  public async getTokenBalances(
-    address: string,
-    token?: string,
-  ): Promise<TokenBalance[]> {
-    const owner = evmAddressSchema.parse(address);
-
-    if (token) {
-      return [
-        await this.getTokenBalance(
-          owner,
-          await this.resolveTokenMetadata(token),
-        ),
-      ];
-    }
-
-    const configuredAddresses = [
-      ...new Set(Object.values(this.config.erc20.tokenMap)),
-    ];
-    const balances = await Promise.all(
-      configuredAddresses.map(async (contractAddress) =>
-        this.getTokenBalance(
-          owner,
-          await this.resolveTokenMetadata(contractAddress),
-        ),
-      ),
-    );
-
-    return balances.filter((balance) => balance.rawBalance !== "0");
-  }
-
-  public async getNativeBalance(address: string): Promise<TokenBalance> {
-    const owner = evmAddressSchema.parse(address);
-    const rawBalance = await this.provider.getBalance(owner);
-    const nativeToken = this.getNativeGasToken();
-
-    return {
-      ...nativeToken,
-      owner,
-      rawBalance: rawBalance.toString(),
-      balance: formatUnits(rawBalance, nativeToken.decimals),
-    };
-  }
-
   public async getNeoN3GasBalance(address: string): Promise<TokenBalance> {
     const owner = await this.resolveNeoN3AddressOrName(address);
-    const gasToken = this.getNeoN3GasToken();
 
-    return this.getNeoN3TokenBalance(owner, gasToken);
+    return this.getNeoN3TokenBalance(owner, this.getNeoN3GasToken());
   }
 
   public async getNeoN3TokenBalances(
@@ -345,8 +248,7 @@ export class NeoXProvider implements NeoProvider {
     }
 
     try {
-      const nep17Balances =
-        await this.requireNeoN3RpcClient().getNep17Balances(owner);
+      const nep17Balances = await this.neoN3RpcClient.getNep17Balances(owner);
       const balances = await Promise.all(
         nep17Balances.balance.map(async (entry) => {
           const metadata = await this.safeResolveNeoN3TokenMetadata(
@@ -356,7 +258,10 @@ export class NeoXProvider implements NeoProvider {
           return {
             ...metadata,
             owner,
-            rawBalance: parseUnits(entry.amount, metadata.decimals).toString(),
+            rawBalance: parseDecimalAmount(
+              entry.amount,
+              metadata.decimals,
+            ).toString(),
             balance: entry.amount,
           };
         }),
@@ -415,8 +320,7 @@ export class NeoXProvider implements NeoProvider {
     >;
 
     try {
-      transferHistory =
-        await this.requireNeoN3RpcClient().getNep17Transfers(owner);
+      transferHistory = await this.neoN3RpcClient.getNep17Transfers(owner);
     } catch (error) {
       throw new ProviderCapabilityError(
         "Neo N3 transfer history requires the TokenTracker RPC plugin.",
@@ -466,116 +370,49 @@ export class NeoXProvider implements NeoProvider {
 
   public async getTransaction(hash: string): Promise<TransactionDetails> {
     const normalizedHash = hash256Schema.parse(hash);
-    const transaction = await this.provider.getTransaction(normalizedHash);
-
-    if (!transaction) {
-      throw new NotFoundError(
-        `Transaction ${normalizedHash} was not found on Neo X.`,
-      );
-    }
-
-    const receipt = await this.provider.getTransactionReceipt(normalizedHash);
-    const serializedTransaction =
-      typeof transaction.toJSON === "function"
-        ? transaction.toJSON()
-        : transaction;
-    const serializedReceipt =
-      receipt && typeof receipt.toJSON === "function"
-        ? receipt.toJSON()
-        : receipt;
-
-    return {
-      transaction: normalizeResult(serializedTransaction) as Record<
-        string,
-        unknown
-      >,
-      receipt: serializedReceipt
-        ? (normalizeResult(serializedReceipt) as Record<string, unknown>)
-        : null,
-    };
-  }
-
-  public async getTransactionStatus(input: {
-    hash: string;
-    network: "neoX" | "neoN3";
-  }): Promise<TransactionStatus> {
-    const normalizedHash = hash256Schema.parse(input.hash);
-
-    if (input.network === "neoN3") {
-      return this.getNeoN3TransactionStatus(normalizedHash);
-    }
-
-    return this.getNeoXTransactionStatus(normalizedHash);
-  }
-
-  private async getNeoXTransactionStatus(
-    hash: string,
-  ): Promise<TransactionStatus> {
-    const transaction = await this.provider.getTransaction(hash);
-
-    if (!transaction) {
-      return {
-        hash,
-        network: "neoX",
-        status: "not_found",
-        summary: `Neo X transaction ${hash} was not found.`,
-        transaction: null,
-        receipt: null,
-      };
-    }
-
-    const receipt = await this.provider.getTransactionReceipt(hash);
-    const serializedTransaction = this.normalizeRecord(transaction);
-    const serializedReceipt = receipt ? this.normalizeRecord(receipt) : null;
-
-    if (!receipt) {
-      return {
-        hash,
-        network: "neoX",
-        status: "pending",
-        summary: `Neo X transaction ${hash} is pending.`,
-        transaction: serializedTransaction,
-        receipt: null,
-      };
-    }
-
-    const status = this.isSuccessfulReceiptStatus(receipt.status)
-      ? "confirmed"
-      : "failed";
-
-    return {
-      hash,
-      network: "neoX",
-      status,
-      summary:
-        status === "confirmed"
-          ? `Neo X transaction ${hash} is confirmed.`
-          : `Neo X transaction ${hash} failed.`,
-      blockNumber:
-        typeof receipt.blockNumber === "number"
-          ? receipt.blockNumber
-          : undefined,
-      transaction: serializedTransaction,
-      receipt: serializedReceipt,
-    };
-  }
-
-  private async getNeoN3TransactionStatus(
-    hash: string,
-  ): Promise<TransactionStatus> {
     let transaction: unknown;
 
     try {
-      transaction = await this.requireNeoN3RpcClient().getRawTransaction(
-        hash,
+      transaction = await this.neoN3RpcClient.getRawTransaction(
+        normalizedHash,
+        true,
+      );
+    } catch {
+      throw new NotFoundError(
+        `Transaction ${normalizedHash} was not found on Neo N3.`,
+      );
+    }
+
+    let applicationLog: unknown;
+
+    try {
+      applicationLog =
+        await this.neoN3RpcClient.getApplicationLog(normalizedHash);
+    } catch {
+      applicationLog = null;
+    }
+
+    return {
+      transaction: this.normalizeUnknownRecord(transaction) ?? {},
+      applicationLog: this.normalizeUnknownRecord(applicationLog),
+    };
+  }
+
+  public async getTransactionStatus(hash: string): Promise<TransactionStatus> {
+    const normalizedHash = hash256Schema.parse(hash);
+    let transaction: unknown;
+
+    try {
+      transaction = await this.neoN3RpcClient.getRawTransaction(
+        normalizedHash,
         true,
       );
     } catch {
       return {
-        hash,
+        hash: normalizedHash,
         network: "neoN3",
         status: "not_found",
-        summary: `Neo N3 transaction ${hash} was not found.`,
+        summary: `Neo N3 transaction ${normalizedHash} was not found.`,
         transaction: null,
         applicationLog: null,
       };
@@ -585,7 +422,7 @@ export class NeoXProvider implements NeoProvider {
 
     try {
       applicationLog =
-        await this.requireNeoN3RpcClient().getApplicationLog(hash);
+        await this.neoN3RpcClient.getApplicationLog(normalizedHash);
     } catch {
       applicationLog = null;
     }
@@ -603,15 +440,15 @@ export class NeoXProvider implements NeoProvider {
     }
 
     return {
-      hash,
+      hash: normalizedHash,
       network: "neoN3",
       status,
       summary:
         status === "confirmed"
-          ? `Neo N3 transaction ${hash} is confirmed.`
+          ? `Neo N3 transaction ${normalizedHash} is confirmed.`
           : status === "failed"
-            ? `Neo N3 transaction ${hash} failed.`
-            : `Neo N3 transaction ${hash} is pending.`,
+            ? `Neo N3 transaction ${normalizedHash} failed.`
+            : `Neo N3 transaction ${normalizedHash} is pending.`,
       blockNumber: this.extractBlockNumber(serializedTransaction),
       transaction: serializedTransaction,
       applicationLog: serializedApplicationLog,
@@ -619,58 +456,19 @@ export class NeoXProvider implements NeoProvider {
   }
 
   public async getBlock(reference: BlockReference): Promise<unknown> {
-    const block =
-      reference.height !== undefined
-        ? await this.provider.getBlock(reference.height)
-        : await this.provider.getBlock(
-            hash256Schema.parse(reference.hash ?? ""),
-          );
+    try {
+      const block =
+        reference.height !== undefined
+          ? await this.neoN3RpcClient.getBlock(reference.height, true)
+          : await this.neoN3RpcClient.getBlock(
+              hash256Schema.parse(reference.hash ?? ""),
+              true,
+            );
 
-    if (!block) {
-      throw new NotFoundError("The requested block was not found on Neo X.");
+      return normalizeResult(block);
+    } catch {
+      throw new NotFoundError("The requested block was not found on Neo N3.");
     }
-
-    return normalizeResult(
-      typeof block.toJSON === "function" ? block.toJSON() : block,
-    );
-  }
-
-  public async invokeRead(
-    contractAddress: string,
-    functionSignature: string,
-    args: unknown[] = [],
-  ): Promise<ReadInvocationResult> {
-    const target = evmAddressSchema.parse(contractAddress);
-    const interfaceInstance = new Interface([
-      ensureFunctionDeclaration(functionSignature),
-    ]);
-    const fragment = interfaceInstance.getFunction(functionSignature.trim());
-
-    if (!fragment) {
-      throw new ValidationError(
-        `Unable to resolve function signature '${functionSignature}'.`,
-      );
-    }
-
-    const rawResult = await this.provider.call({
-      to: target,
-      data: interfaceInstance.encodeFunctionData(fragment, args),
-    });
-    const decodedResult = interfaceInstance.decodeFunctionResult(
-      fragment,
-      rawResult,
-    );
-
-    return {
-      contractAddress: target,
-      functionSignature: fragment.format("sighash"),
-      args,
-      rawResult,
-      result:
-        decodedResult.length === 1
-          ? normalizeResult(decodedResult[0])
-          : normalizeResult([...decodedResult]),
-    };
   }
 
   public async resolveNeoN3TokenMetadata(
@@ -709,7 +507,7 @@ export class NeoXProvider implements NeoProvider {
   ): Promise<NeoN3ReadInvocationResult> {
     const target = hash160Schema.parse(contractHash);
     const normalizedOperation = operation.trim();
-    const result = await this.requireNeoN3RpcClient().invokeFunction(
+    const result = await this.neoN3RpcClient.invokeFunction(
       target,
       normalizedOperation,
       args.map((arg) => this.toNeoN3ContractParam(arg)),
@@ -729,70 +527,6 @@ export class NeoXProvider implements NeoProvider {
       rawResult: this.normalizeUnknownRecord(result) ?? {},
       result: this.normalizeNeoN3InvokeResult(result.stack),
     };
-  }
-
-  public async resolveTokenMetadata(token: string): Promise<TokenMetadata> {
-    const tokenReference = token.trim();
-    const normalizedSymbol = tokenReference.toUpperCase();
-
-    if (normalizedSymbol === "GAS") {
-      return this.getNativeGasToken();
-    }
-
-    if (normalizedSymbol === "WGAS" || normalizedSymbol === "WETH") {
-      return this.loadErc20Metadata(this.config.erc20.wrappedGasAddress);
-    }
-
-    if (isAddress(tokenReference)) {
-      return this.loadErc20Metadata(getAddress(tokenReference));
-    }
-
-    const configuredAddress = this.config.erc20.tokenMap[normalizedSymbol];
-
-    if (!configuredAddress) {
-      throw new NotFoundError(
-        `Unable to resolve token '${tokenReference}'. Add it to ERC20_TOKEN_MAP_JSON or use an address.`,
-      );
-    }
-
-    return this.loadErc20Metadata(configuredAddress);
-  }
-
-  public async buildContractWrite(
-    input: ContractWriteInput,
-  ): Promise<PreparedTransaction> {
-    const target = evmAddressSchema.parse(input.contractAddress);
-    const interfaceInstance = new Interface([
-      ensureFunctionDeclaration(input.functionSignature),
-    ]);
-    const fragment = interfaceInstance.getFunction(
-      input.functionSignature.trim(),
-    );
-
-    if (!fragment) {
-      throw new ValidationError(
-        `Unable to resolve function signature '${input.functionSignature}'.`,
-      );
-    }
-
-    const encodedData = interfaceInstance.encodeFunctionData(
-      fragment,
-      input.args ?? [],
-    );
-    const summary = `Prepared a contract write for ${fragment.format("sighash")} on ${target}.`;
-
-    return this.buildPreparedTransaction({
-      action: "prepareContractWrite",
-      summary,
-      to: target,
-      data: encodedData,
-      value: input.value
-        ? parseUnits(input.value, this.getNativeGasToken().decimals).toString()
-        : undefined,
-      contractAddress: target,
-      functionSignature: fragment.format("sighash"),
-      allowedContracts: [target],
-    });
   }
 
   public async buildNeoN3ContractWrite(
@@ -831,7 +565,7 @@ export class NeoXProvider implements NeoProvider {
     const transactionConfig = {
       account,
       networkMagic,
-      rpcAddress: this.requireNeoN3RpcUrl(),
+      rpcAddress: this.config.neoN3.rpcUrl,
     };
 
     await experimental.txHelpers.setBlockExpiry(transaction, transactionConfig);
@@ -871,7 +605,7 @@ export class NeoXProvider implements NeoProvider {
       );
     }
 
-    const rawAmountIn = parseUnits(input.amount, fromToken.decimals);
+    const rawAmountIn = parseDecimalAmount(input.amount, fromToken.decimals);
     const slippagePercent = this.normalizeSwapSlippagePercent(
       input.slippagePercent,
     );
@@ -892,7 +626,10 @@ export class NeoXProvider implements NeoProvider {
       ),
     );
     const routeAmounts = route.routeAmountsRaw.map((amount, index) =>
-      formatUnits(amount, routeTokens[index]?.decimals ?? toToken.decimals),
+      formatDecimalAmount(
+        amount,
+        routeTokens[index]?.decimals ?? toToken.decimals,
+      ),
     );
     const notes: string[] = [];
 
@@ -917,8 +654,11 @@ export class NeoXProvider implements NeoProvider {
       fromToken,
       toToken,
       amountIn: input.amount,
-      amountOut: formatUnits(amountOutRaw, toToken.decimals),
-      minimumAmountOut: formatUnits(minimumAmountOutRaw, toToken.decimals),
+      amountOut: formatDecimalAmount(amountOutRaw, toToken.decimals),
+      minimumAmountOut: formatDecimalAmount(
+        minimumAmountOutRaw,
+        toToken.decimals,
+      ),
       slippagePercent,
       slippageBps,
       routeSymbols: route.routeSymbols,
@@ -932,14 +672,129 @@ export class NeoXProvider implements NeoProvider {
     };
   }
 
+  public async prepareNeoN3GasTransfer(input: {
+    to: string;
+    amount: string;
+  }): Promise<PreparedTransaction> {
+    const account = this.requireNeoN3Wallet();
+    const networkMagic = await this.getNeoN3NetworkMagic();
+    const recipient = await this.resolveNeoN3AddressOrName(input.to);
+    const signer = new neoTx.Signer({
+      account: account.scriptHash,
+      scopes: neoTx.WitnessScope.CalledByEntry,
+    });
+    const scriptBuilder = new neoSc.ScriptBuilder();
+
+    scriptBuilder.emitAppCall(this.config.neoN3.gasTokenContract, "transfer", [
+      neoSc.ContractParam.hash160(account.scriptHash),
+      neoSc.ContractParam.hash160(
+        neoWallet.getScriptHashFromAddress(recipient),
+      ),
+      neoSc.ContractParam.integer(
+        parseDecimalAmount(input.amount, 8).toString(),
+      ),
+      neoSc.ContractParam.any(null),
+    ]);
+    scriptBuilder.emit(neoSc.OpCode.ASSERT);
+
+    const transaction = new neoTx.Transaction({
+      script: scriptBuilder.build(),
+      signers: [signer],
+    });
+    const transactionConfig = {
+      account,
+      networkMagic,
+      rpcAddress: this.config.neoN3.rpcUrl,
+    };
+
+    await experimental.txHelpers.setBlockExpiry(transaction, transactionConfig);
+    await experimental.txHelpers.addFees(transaction, transactionConfig);
+
+    return this.buildNeoN3PreparedTransaction({
+      action: "sendNeoN3Gas",
+      summary: `Prepared a Neo N3 GAS transfer of ${input.amount} GAS to ${recipient}.`,
+      transaction,
+      sender: account.address,
+      networkMagic,
+      to: recipient,
+      amount: input.amount,
+      tokenSymbol: "GAS",
+      contractAddress: this.config.neoN3.gasTokenContract,
+      allowedContracts: [this.config.neoN3.gasTokenContract],
+    });
+  }
+
+  public async prepareNeoN3TokenTransfer(
+    input: NeoN3TokenTransferInput,
+  ): Promise<PreparedTransaction> {
+    const token = await this.resolveNeoN3TokenMetadata(input.token);
+
+    if (token.symbol === "GAS") {
+      throw new ValidationError(
+        "Use sendNeoN3Gas for native GAS transfers on Neo N3.",
+      );
+    }
+
+    const account = this.requireNeoN3Wallet();
+    const networkMagic = await this.getNeoN3NetworkMagic();
+    const recipient = await this.resolveNeoN3AddressOrName(input.to);
+    const signer = new neoTx.Signer({
+      account: account.scriptHash,
+      scopes: neoTx.WitnessScope.CalledByEntry,
+    });
+    const scriptBuilder = new neoSc.ScriptBuilder();
+
+    scriptBuilder.emitAppCall(token.contractAddress, "transfer", [
+      neoSc.ContractParam.hash160(account.scriptHash),
+      neoSc.ContractParam.hash160(
+        neoWallet.getScriptHashFromAddress(recipient),
+      ),
+      neoSc.ContractParam.integer(
+        parseDecimalAmount(input.amount, token.decimals).toString(),
+      ),
+      neoSc.ContractParam.any(null),
+    ]);
+    scriptBuilder.emit(neoSc.OpCode.ASSERT);
+
+    const transaction = new neoTx.Transaction({
+      script: scriptBuilder.build(),
+      signers: [signer],
+    });
+    const transactionConfig = {
+      account,
+      networkMagic,
+      rpcAddress: this.config.neoN3.rpcUrl,
+    };
+
+    await experimental.txHelpers.setBlockExpiry(transaction, transactionConfig);
+    await experimental.txHelpers.addFees(transaction, transactionConfig);
+
+    return this.buildNeoN3PreparedTransaction({
+      action: "sendNeoN3Token",
+      summary: `Prepared a Neo N3 transfer of ${input.amount} ${token.symbol} to ${recipient}.`,
+      transaction,
+      sender: account.address,
+      networkMagic,
+      to: recipient,
+      amount: input.amount,
+      tokenSymbol: token.symbol,
+      tokenAddress: token.contractAddress,
+      contractAddress: token.contractAddress,
+      allowedContracts: [token.contractAddress],
+    });
+  }
+
   public async prepareNeoN3TokenSwap(
     input: NeoN3TokenSwapInput,
   ): Promise<PreparedTransaction> {
     const quote = await this.getNeoN3SwapQuote(input);
     const account = this.requireNeoN3Wallet();
     const networkMagic = await this.getNeoN3NetworkMagic();
-    const rawAmountIn = parseUnits(input.amount, quote.fromToken.decimals);
-    const rawMinimumAmountOut = parseUnits(
+    const rawAmountIn = parseDecimalAmount(
+      input.amount,
+      quote.fromToken.decimals,
+    );
+    const rawMinimumAmountOut = parseDecimalAmount(
       quote.minimumAmountOut,
       quote.toToken.decimals,
     );
@@ -969,6 +824,7 @@ export class NeoXProvider implements NeoProvider {
       allowedContracts,
     });
     const scriptBuilder = new neoSc.ScriptBuilder();
+
     scriptBuilder.emitAppCall(quote.routerContract, "standardConvert", [
       neoSc.ContractParam.hash160(account.scriptHash),
       neoSc.ContractParam.integer(rawAmountIn.toString()),
@@ -993,7 +849,7 @@ export class NeoXProvider implements NeoProvider {
     const transactionConfig = {
       account,
       networkMagic,
-      rpcAddress: this.requireNeoN3RpcUrl(),
+      rpcAddress: this.config.neoN3.rpcUrl,
     };
 
     await experimental.txHelpers.setBlockExpiry(transaction, transactionConfig);
@@ -1025,402 +881,20 @@ export class NeoXProvider implements NeoProvider {
     });
   }
 
-  public async getGasBridgeQuote(
-    input: GasBridgeQuoteInput,
-  ): Promise<BridgeQuote> {
-    const sourceNetwork = input.direction === "neoXToNeoN3" ? "neoX" : "neoN3";
-    const destinationNetwork =
-      input.direction === "neoXToNeoN3" ? "neoN3" : "neoX";
-    const config =
-      input.direction === "neoXToNeoN3"
-        ? await this.getNeoXBridgeConfig()
-        : await this.getNeoN3BridgeConfig();
-    const destinationAddress =
-      input.direction === "neoXToNeoN3"
-        ? input.to
-          ? await this.resolveNeoN3BridgeDestination(input.to)
-          : this.neoN3Wallet?.address
-        : input.to
-          ? this.resolveNeoXBridgeDestination(input.to)
-          : this.wallet?.address;
-    const effectiveMaxFee = input.maxFee ?? config.decimal;
-    const notes: string[] = [];
-    let estimatedReceived: string | undefined;
-
-    if (config.minimumAmount) {
-      notes.push(
-        `Minimum amount on the current bridge route is ${config.minimumAmount} GAS.`,
-      );
-    }
-
-    if (config.maximumAmount) {
-      notes.push(
-        `Maximum amount on the current bridge route is ${config.maximumAmount} GAS.`,
-      );
-    }
-
-    if (config.paused) {
-      notes.push("The bridge currently reports a paused state.");
-    }
-
-    if (input.amount) {
-      const decimals = sourceNetwork === "neoX" ? 18 : 8;
-      const rawAmount = parseUnits(input.amount, decimals);
-      const rawFee = parseUnits(effectiveMaxFee, decimals);
-
-      if (config.minimumRaw !== undefined && rawAmount < config.minimumRaw) {
-        notes.push(
-          `Requested amount ${input.amount} GAS is below the current minimum.`,
-        );
-      }
-
-      if (config.maximumRaw !== undefined && rawAmount > config.maximumRaw) {
-        notes.push(
-          `Requested amount ${input.amount} GAS is above the current maximum.`,
-        );
-      }
-
-      estimatedReceived =
-        rawAmount > rawFee ? formatUnits(rawAmount - rawFee, decimals) : "0";
-      notes.push(
-        `Estimated received amount assumes the bridge charges ${effectiveMaxFee} GAS.`,
-      );
-    }
-
-    return {
-      direction: input.direction,
-      sourceNetwork,
-      destinationNetwork,
-      amount: input.amount,
-      destinationAddress,
-      currentFee: config.decimal,
-      effectiveMaxFee,
-      minimumAmount: config.minimumAmount,
-      maximumAmount: config.maximumAmount,
-      estimatedReceived,
-      paused: config.paused,
-      etaLowMinutes: 5,
-      etaHighMinutes: 30,
-      notes,
-    };
-  }
-
-  public async getBridgeStatus(input: {
-    txHash: string;
-    direction: BridgeGasDirection;
-    destinationAddress?: string;
-    amount?: string;
-    maxFee?: string;
-    createdAt?: string;
-  }): Promise<BridgeStatus> {
-    const quote = await this.getGasBridgeQuote({
-      direction: input.direction,
-      amount: input.amount ?? "1",
-      to: input.destinationAddress,
-      maxFee: input.maxFee,
-    });
-    const sourceStatus = await this.getTransactionStatus({
-      hash: input.txHash,
-      network: quote.sourceNetwork,
-    });
-    const arrival =
-      quote.destinationNetwork === "neoN3"
-        ? await this.detectNeoN3BridgeArrival({
-            destinationAddress: input.destinationAddress,
-            amount: input.amount,
-            estimatedReceived: input.amount
-              ? quote.estimatedReceived
-              : undefined,
-            createdAt: input.createdAt,
-            sourceStatus,
-          })
-        : await this.detectNeoXBridgeArrival({
-            destinationAddress: input.destinationAddress,
-            amount: input.amount,
-            estimatedReceived: input.amount
-              ? quote.estimatedReceived
-              : undefined,
-            sourceStatus,
-          });
-
-    return {
-      txHash: input.txHash,
-      direction: input.direction,
-      sourceNetwork: quote.sourceNetwork,
-      destinationNetwork: quote.destinationNetwork,
-      sourceStatus,
-      destinationAddress: input.destinationAddress,
-      amount: input.amount,
-      currentFee: quote.currentFee,
-      effectiveMaxFee: quote.effectiveMaxFee,
-      minimumAmount: quote.minimumAmount,
-      maximumAmount: quote.maximumAmount,
-      estimatedReceived: input.amount ? quote.estimatedReceived : undefined,
-      etaLowMinutes:
-        arrival.status === "arrived"
-          ? 0
-          : sourceStatus.status === "confirmed"
-            ? 3
-            : quote.etaLowMinutes,
-      etaHighMinutes:
-        arrival.status === "arrived"
-          ? 0
-          : sourceStatus.status === "confirmed"
-            ? 15
-            : quote.etaHighMinutes,
-      arrival,
-      summary: this.buildBridgeStatusSummary(
-        input.direction,
-        sourceStatus,
-        arrival,
-      ),
-    };
-  }
-
-  public async prepareGasBridge(
-    input: GasBridgeInput,
-  ): Promise<PreparedTransaction> {
-    if (input.direction === "neoXToNeoN3") {
-      return this.prepareNeoXGasBridge(input);
-    }
-
-    return this.prepareNeoN3GasBridge(input);
-  }
-
-  public async prepareGasTransfer(input: {
-    to: string;
-    amount: string;
-  }): Promise<PreparedTransaction> {
-    const recipient = evmAddressSchema.parse(input.to);
-    const summary = `Prepared a transfer of ${input.amount} GAS to ${recipient}.`;
-
-    return this.buildPreparedTransaction({
-      action: "sendGas",
-      summary,
-      to: recipient,
-      value: parseUnits(
-        input.amount,
-        this.getNativeGasToken().decimals,
-      ).toString(),
-      amount: input.amount,
-      tokenSymbol: "GAS",
-      allowedContracts: [recipient],
-    });
-  }
-
-  public async prepareNeoN3GasTransfer(input: {
-    to: string;
-    amount: string;
-  }): Promise<PreparedTransaction> {
-    const account = this.requireNeoN3Wallet();
-    const networkMagic = await this.getNeoN3NetworkMagic();
-    const recipient = await this.resolveNeoN3AddressOrName(input.to);
-    const signer = new neoTx.Signer({
-      account: account.scriptHash,
-      scopes: neoTx.WitnessScope.CalledByEntry,
-    });
-    const scriptBuilder = new neoSc.ScriptBuilder();
-
-    scriptBuilder.emitAppCall(
-      this.config.bridge.neoN3GasTokenContract,
-      "transfer",
-      [
-        neoSc.ContractParam.hash160(account.scriptHash),
-        neoSc.ContractParam.hash160(
-          neoWallet.getScriptHashFromAddress(recipient),
-        ),
-        neoSc.ContractParam.integer(parseUnits(input.amount, 8).toString()),
-        neoSc.ContractParam.any(null),
-      ],
-    );
-    scriptBuilder.emit(neoSc.OpCode.ASSERT);
-
-    const transaction = new neoTx.Transaction({
-      script: scriptBuilder.build(),
-      signers: [signer],
-    });
-    const transactionConfig = {
-      account,
-      networkMagic,
-      rpcAddress: this.requireNeoN3RpcUrl(),
-    };
-
-    await experimental.txHelpers.setBlockExpiry(transaction, transactionConfig);
-    await experimental.txHelpers.addFees(transaction, transactionConfig);
-
-    return this.buildNeoN3PreparedTransaction({
-      action: "sendNeoN3Gas",
-      summary: `Prepared a Neo N3 GAS transfer of ${input.amount} GAS to ${recipient}.`,
-      transaction,
-      sender: account.address,
-      networkMagic,
-      to: recipient,
-      amount: input.amount,
-      tokenSymbol: "GAS",
-      contractAddress: this.config.bridge.neoN3GasTokenContract,
-      allowedContracts: [this.config.bridge.neoN3GasTokenContract],
-    });
-  }
-
-  public async prepareNeoN3TokenTransfer(
-    input: NeoN3TokenTransferInput,
-  ): Promise<PreparedTransaction> {
-    const token = await this.resolveNeoN3TokenMetadata(input.token);
-
-    if (token.symbol === "GAS") {
-      throw new ValidationError(
-        "Use sendNeoN3Gas for native GAS transfers on Neo N3.",
-      );
-    }
-
-    const account = this.requireNeoN3Wallet();
-    const networkMagic = await this.getNeoN3NetworkMagic();
-    const recipient = await this.resolveNeoN3AddressOrName(input.to);
-    const signer = new neoTx.Signer({
-      account: account.scriptHash,
-      scopes: neoTx.WitnessScope.CalledByEntry,
-    });
-    const scriptBuilder = new neoSc.ScriptBuilder();
-
-    scriptBuilder.emitAppCall(token.contractAddress, "transfer", [
-      neoSc.ContractParam.hash160(account.scriptHash),
-      neoSc.ContractParam.hash160(
-        neoWallet.getScriptHashFromAddress(recipient),
-      ),
-      neoSc.ContractParam.integer(
-        parseUnits(input.amount, token.decimals).toString(),
-      ),
-      neoSc.ContractParam.any(null),
-    ]);
-    scriptBuilder.emit(neoSc.OpCode.ASSERT);
-
-    const transaction = new neoTx.Transaction({
-      script: scriptBuilder.build(),
-      signers: [signer],
-    });
-    const transactionConfig = {
-      account,
-      networkMagic,
-      rpcAddress: this.requireNeoN3RpcUrl(),
-    };
-
-    await experimental.txHelpers.setBlockExpiry(transaction, transactionConfig);
-    await experimental.txHelpers.addFees(transaction, transactionConfig);
-
-    return this.buildNeoN3PreparedTransaction({
-      action: "sendNeoN3Token",
-      summary: `Prepared a Neo N3 transfer of ${input.amount} ${token.symbol} to ${recipient}.`,
-      transaction,
-      sender: account.address,
-      networkMagic,
-      to: recipient,
-      amount: input.amount,
-      tokenSymbol: token.symbol,
-      tokenAddress: token.contractAddress,
-      contractAddress: token.contractAddress,
-      allowedContracts: [token.contractAddress],
-    });
-  }
-
-  public async prepareErc20Transfer(
-    input: Erc20TransferInput,
-  ): Promise<PreparedTransaction> {
-    const recipient = evmAddressSchema.parse(input.to);
-    const token = await this.resolveTokenMetadata(input.token);
-
-    if (token.isNative) {
-      throw new ValidationError(
-        "Use sendGas for native GAS transfers on Neo X.",
-      );
-    }
-
-    const rawAmount = parseUnits(input.amount, token.decimals);
-    const data = this.erc20Interface.encodeFunctionData("transfer", [
-      recipient,
-      rawAmount,
-    ]);
-    const summary = `Prepared a transfer of ${input.amount} ${token.symbol} to ${recipient}.`;
-
-    return this.buildPreparedTransaction({
-      action: "sendErc20",
-      summary,
-      to: token.contractAddress,
-      data,
-      amount: input.amount,
-      tokenAddress: token.contractAddress,
-      tokenSymbol: token.symbol,
-      allowedContracts: [token.contractAddress, recipient],
-    });
-  }
-
-  public async prepareErc20Approval(
-    input: Erc20ApprovalInput,
-  ): Promise<PreparedTransaction> {
-    const token = await this.resolveTokenMetadata(input.token);
-
-    if (token.isNative) {
-      throw new ValidationError(
-        "Native GAS does not require ERC-20 approval on Neo X.",
-      );
-    }
-
-    const spender = evmAddressSchema.parse(input.spender);
-    const rawAmount = parseUnits(input.amount, token.decimals);
-    const data = this.erc20Interface.encodeFunctionData("approve", [
-      spender,
-      rawAmount,
-    ]);
-    const summary = `Prepared an approval of ${input.amount} ${token.symbol} for ${spender}.`;
-
-    return this.buildPreparedTransaction({
-      action: "approveErc20",
-      summary,
-      to: token.contractAddress,
-      data,
-      amount: input.amount,
-      tokenAddress: token.contractAddress,
-      tokenSymbol: token.symbol,
-      spender,
-      allowedContracts: [token.contractAddress, spender],
-    });
-  }
-
   public async signAndBroadcast(
     prepared: PreparedTransaction,
   ): Promise<BroadcastResult> {
-    if (prepared.network === "neoN3") {
-      const account = this.requireNeoN3Wallet();
-      const rpcClient = this.requireNeoN3RpcClient();
-      const transaction = neoTx.Transaction.deserialize(
-        prepared.unsignedTransaction,
-      );
-
-      transaction.sign(account, await this.getNeoN3NetworkMagic());
-
-      return createBroadcastResult(
-        prepared,
-        await rpcClient.sendRawTransaction(transaction),
-      );
-    }
-
-    const wallet = this.requireWallet();
-    const request = prepared.request;
-
-    if (!request) {
-      throw new ValidationError(
-        "The prepared Neo X transaction is missing its request payload.",
-      );
-    }
-
-    const response = await wallet.sendTransaction(
-      this.toTransactionRequest(request),
+    const account = this.requireNeoN3Wallet();
+    const transaction = neoTx.Transaction.deserialize(
+      prepared.unsignedTransaction,
     );
 
-    return createBroadcastResult(prepared, response.hash);
-  }
+    transaction.sign(account, await this.getNeoN3NetworkMagic());
 
-  public getWalletAddress(): string {
-    return this.requireWallet().address;
+    return createBroadcastResult(
+      prepared,
+      await this.neoN3RpcClient.sendRawTransaction(transaction),
+    );
   }
 
   public getNeoN3WalletAddress(): string | undefined {
@@ -1428,149 +902,12 @@ export class NeoXProvider implements NeoProvider {
   }
 
   public walletEnabled(): boolean {
-    return Boolean(this.wallet);
-  }
-
-  public neoN3WalletEnabled(): boolean {
     return Boolean(this.neoN3Wallet);
   }
 
-  private async prepareNeoXGasBridge(
-    input: GasBridgeInput,
-  ): Promise<PreparedTransaction> {
-    const bridgeContractAddress = this.requireNeoXBridgeContractAddress();
-    const quote = await this.getGasBridgeQuote(input);
-    const destinationAddress = await this.resolveNeoN3BridgeDestination(
-      input.to,
-    );
-    const maxFee = await this.resolveNeoXBridgeFee(input.maxFee);
-    const data = this.neoXBridgeInterface.encodeFunctionData("withdrawNative", [
-      this.toNeoN3ScriptHash(destinationAddress),
-      maxFee.raw,
-    ]);
-    const summary = `Prepared a Neo X -> Neo N3 bridge of ${input.amount} GAS to ${destinationAddress}.`;
-
-    return this.buildPreparedTransaction({
-      action: "bridgeGas",
-      summary,
-      to: bridgeContractAddress,
-      data,
-      value: parseUnits(
-        input.amount,
-        this.getNativeGasToken().decimals,
-      ).toString(),
-      amount: input.amount,
-      tokenSymbol: "GAS",
-      bridgeDirection: "neoXToNeoN3",
-      destinationAddress,
-      maxFee: maxFee.decimal,
-      estimatedReceived: quote.estimatedReceived,
-      minimumAmount: quote.minimumAmount,
-      maximumAmount: quote.maximumAmount,
-      bridgeEtaLowMinutes: quote.etaLowMinutes,
-      bridgeEtaHighMinutes: quote.etaHighMinutes,
-      bridgeContractAddress,
-      allowedContracts: [bridgeContractAddress],
-    });
-  }
-
-  private async prepareNeoN3GasBridge(
-    input: GasBridgeInput,
-  ): Promise<PreparedTransaction> {
-    const bridgeContractAddress = this.requireNeoN3BridgeContractAddress();
-    const quote = await this.getGasBridgeQuote(input);
-    const account = this.requireNeoN3Wallet();
-    const networkMagic = await this.getNeoN3NetworkMagic();
-    const maxFee = await this.resolveNeoN3BridgeFee(input.maxFee);
-    const destinationAddress = this.resolveNeoXBridgeDestination(input.to);
-    const signer = new neoTx.Signer({
-      account: account.scriptHash,
-      scopes: neoTx.WitnessScope.CustomContracts,
-      allowedContracts: [
-        bridgeContractAddress,
-        this.config.bridge.neoN3GasTokenContract,
-      ],
-    });
-    const scriptBuilder = new neoSc.ScriptBuilder();
-
-    scriptBuilder.emitAppCall(bridgeContractAddress, "depositNative", [
-      neoSc.ContractParam.hash160(account.scriptHash),
-      neoSc.ContractParam.hash160(destinationAddress),
-      neoSc.ContractParam.integer(parseUnits(input.amount, 8).toString()),
-      neoSc.ContractParam.integer(maxFee.raw.toString()),
-    ]);
-
-    const transaction = new neoTx.Transaction({
-      script: scriptBuilder.build(),
-      signers: [signer],
-    });
-    const bridgeConfig = {
-      account,
-      networkMagic,
-      rpcAddress: this.requireNeoN3RpcUrl(),
-    };
-
-    await experimental.txHelpers.setBlockExpiry(transaction, bridgeConfig);
-    await experimental.txHelpers.addFees(transaction, bridgeConfig);
-
-    return this.buildNeoN3PreparedTransaction({
-      action: "bridgeGas",
-      summary: `Prepared a Neo N3 -> Neo X bridge of ${input.amount} GAS to ${destinationAddress}.`,
-      transaction,
-      sender: account.address,
-      networkMagic,
-      to: bridgeContractAddress,
-      amount: input.amount,
-      tokenSymbol: "GAS",
-      destinationAddress,
-      maxFee: maxFee.decimal,
-      estimatedReceived: quote.estimatedReceived,
-      minimumAmount: quote.minimumAmount,
-      maximumAmount: quote.maximumAmount,
-      bridgeEtaLowMinutes: quote.etaLowMinutes,
-      bridgeEtaHighMinutes: quote.etaHighMinutes,
-      bridgeDirection: "neoN3ToNeoX",
-      bridgeContractAddress,
-      allowedContracts: [
-        bridgeContractAddress,
-        this.config.bridge.neoN3GasTokenContract,
-      ],
-    });
-  }
-
-  private buildNeoN3PreparedTransaction(input: {
-    action: PreparedTransaction["action"];
-    summary: string;
-    transaction: InstanceType<typeof neoTx.Transaction>;
-    sender: string;
-    networkMagic: number;
-    to: string;
-    amount?: string;
-    tokenSymbol?: string;
-    tokenAddress?: string;
-    toTokenSymbol?: string;
-    toTokenAddress?: string;
-    amountOut?: string;
-    minimumAmountOut?: string;
-    slippagePercent?: string;
-    routeSymbols?: string[];
-    routeContracts?: string[];
-    tradingPairIds?: number[];
-    deadlineMinutes?: number;
-    deadlineTimestamp?: number;
-    destinationAddress?: string;
-    maxFee?: string;
-    estimatedReceived?: string;
-    minimumAmount?: string;
-    maximumAmount?: string;
-    bridgeEtaLowMinutes?: number;
-    bridgeEtaHighMinutes?: number;
-    bridgeDirection?: BridgeGasDirection;
-    bridgeContractAddress?: string;
-    contractAddress?: string;
-    operation?: string;
-    allowedContracts: string[];
-  }): PreparedTransaction {
+  private buildNeoN3PreparedTransaction(
+    input: PreparedTransactionInput,
+  ): PreparedTransaction {
     return {
       kind: "transaction",
       action: input.action,
@@ -1584,6 +921,8 @@ export class NeoXProvider implements NeoProvider {
       amount: input.amount,
       tokenAddress: input.tokenAddress,
       tokenSymbol: input.tokenSymbol,
+      contractAddress: input.contractAddress,
+      operation: input.operation,
       toTokenAddress: input.toTokenAddress,
       toTokenSymbol: input.toTokenSymbol,
       amountOut: input.amountOut,
@@ -1594,348 +933,8 @@ export class NeoXProvider implements NeoProvider {
       tradingPairIds: input.tradingPairIds,
       deadlineMinutes: input.deadlineMinutes,
       deadlineTimestamp: input.deadlineTimestamp,
-      contractAddress: input.contractAddress,
-      operation: input.operation,
-      bridgeDirection: input.bridgeDirection,
-      destinationAddress: input.destinationAddress,
-      maxFee: input.maxFee,
-      estimatedReceived: input.estimatedReceived,
-      minimumAmount: input.minimumAmount,
-      maximumAmount: input.maximumAmount,
-      bridgeEtaLowMinutes: input.bridgeEtaLowMinutes,
-      bridgeEtaHighMinutes: input.bridgeEtaHighMinutes,
-      bridgeContractAddress: input.bridgeContractAddress,
       allowedContracts: input.allowedContracts,
     };
-  }
-
-  private async resolveNeoN3BridgeDestination(
-    destination?: string,
-  ): Promise<string> {
-    if (destination) {
-      return this.resolveNeoN3AddressOrName(destination);
-    }
-
-    if (this.neoN3Wallet) {
-      return this.neoN3Wallet.address;
-    }
-
-    throw new ValidationError(
-      "Provide a Neo N3 destination address or set WALLET_WIF or WALLET_PRIVATE_KEY.",
-    );
-  }
-
-  private resolveNeoXBridgeDestination(destination?: string): string {
-    if (destination) {
-      return evmAddressSchema.parse(destination);
-    }
-
-    if (this.wallet) {
-      return this.wallet.address;
-    }
-
-    throw new ValidationError(
-      "Provide a Neo X destination address or set NEO_X_WALLET_PRIVATE_KEY.",
-    );
-  }
-
-  private async resolveNeoXBridgeFee(
-    requestedMaxFee?: string,
-  ): Promise<ResolvedBridgeFee> {
-    const currentFee = await this.getNeoXBridgeFee();
-
-    if (!requestedMaxFee) {
-      return currentFee;
-    }
-
-    const requestedFee = parseUnits(
-      requestedMaxFee,
-      this.getNativeGasToken().decimals,
-    );
-
-    if (requestedFee < currentFee.raw) {
-      throw new ValidationError(
-        `Requested maxFee ${requestedMaxFee} GAS is lower than the current Neo X bridge fee ${currentFee.decimal} GAS.`,
-      );
-    }
-
-    return {
-      decimal: requestedMaxFee,
-      raw: requestedFee,
-    };
-  }
-
-  private async resolveNeoN3BridgeFee(
-    requestedMaxFee?: string,
-  ): Promise<ResolvedBridgeFee> {
-    const currentFee = await this.getNeoN3BridgeFee();
-
-    if (!requestedMaxFee) {
-      return currentFee;
-    }
-
-    const requestedFee = parseUnits(requestedMaxFee, 8);
-
-    if (requestedFee < currentFee.raw) {
-      throw new ValidationError(
-        `Requested maxFee ${requestedMaxFee} GAS is lower than the current Neo N3 bridge fee ${currentFee.decimal} GAS.`,
-      );
-    }
-
-    return {
-      decimal: requestedMaxFee,
-      raw: requestedFee,
-    };
-  }
-
-  private async getNeoXBridgeConfig(): Promise<ResolvedBridgeConfig> {
-    const contract = new Contract(
-      this.requireNeoXBridgeContractAddress(),
-      neoXBridgeAbi,
-      this.provider,
-    );
-    const nativeBridge = (await contract.nativeBridge()) as readonly [
-      boolean,
-      unknown,
-      unknown,
-      readonly [bigint, bigint, bigint, bigint, bigint] & {
-        fee?: bigint;
-        minAmount?: bigint;
-        maxAmount?: bigint;
-      },
-    ];
-    const fee =
-      nativeBridge[3].fee !== undefined
-        ? nativeBridge[3].fee
-        : nativeBridge[3][0];
-    const minimumRaw =
-      nativeBridge[3].minAmount !== undefined
-        ? nativeBridge[3].minAmount
-        : nativeBridge[3][1];
-    const maximumRaw =
-      nativeBridge[3].maxAmount !== undefined
-        ? nativeBridge[3].maxAmount
-        : nativeBridge[3][2];
-
-    return {
-      decimal: formatUnits(fee, this.getNativeGasToken().decimals),
-      raw: fee,
-      minimumAmount: formatUnits(minimumRaw, this.getNativeGasToken().decimals),
-      minimumRaw,
-      maximumAmount: formatUnits(maximumRaw, this.getNativeGasToken().decimals),
-      maximumRaw,
-      paused: nativeBridge[0],
-    };
-  }
-
-  private async getNeoN3BridgeConfig(): Promise<ResolvedBridgeConfig> {
-    const fee = await this.getNeoN3BridgeFee();
-    const minimumRaw = await this.tryGetNeoN3BridgeInteger(
-      "nativeDepositMinAmount",
-    );
-    const maximumRaw = await this.tryGetNeoN3BridgeInteger(
-      "nativeDepositMaxAmount",
-    );
-
-    return {
-      ...fee,
-      minimumAmount:
-        minimumRaw !== undefined ? formatUnits(minimumRaw, 8) : undefined,
-      minimumRaw,
-      maximumAmount:
-        maximumRaw !== undefined ? formatUnits(maximumRaw, 8) : undefined,
-      maximumRaw,
-    };
-  }
-
-  private async getNeoXBridgeFee(): Promise<ResolvedBridgeFee> {
-    const config = await this.getNeoXBridgeConfig();
-
-    return {
-      decimal: config.decimal,
-      raw: config.raw,
-    };
-  }
-
-  private async getNeoN3BridgeFee(): Promise<ResolvedBridgeFee> {
-    const result = await this.requireNeoN3RpcClient().invokeFunction(
-      this.requireNeoN3BridgeContractAddress(),
-      "nativeDepositFee",
-    );
-    const fee = this.parseNeoN3IntegerResult(result, "nativeDepositFee");
-
-    return {
-      decimal: formatUnits(fee, 8),
-      raw: fee,
-    };
-  }
-
-  private async tryGetNeoN3BridgeInteger(
-    operation: string,
-  ): Promise<bigint | undefined> {
-    try {
-      const result = await this.requireNeoN3RpcClient().invokeFunction(
-        this.requireNeoN3BridgeContractAddress(),
-        operation,
-      );
-
-      return this.parseNeoN3IntegerResult(result, operation);
-    } catch {
-      return undefined;
-    }
-  }
-
-  private async detectNeoN3BridgeArrival(input: {
-    destinationAddress?: string;
-    amount?: string;
-    estimatedReceived?: string;
-    createdAt?: string;
-    sourceStatus: TransactionStatus;
-  }): Promise<BridgeStatus["arrival"]> {
-    if (!input.destinationAddress) {
-      return {
-        status: "unknown",
-        summary:
-          "The bridge destination address is missing, so arrival on Neo N3 cannot be checked.",
-        detectionMethod: "unavailable",
-        confidence: "low",
-      };
-    }
-
-    const history = await this.getNeoN3TransferHistory({
-      address: input.destinationAddress,
-      token: "GAS",
-      limit: 10,
-    });
-    const createdAtMs = input.createdAt
-      ? Date.parse(input.createdAt)
-      : undefined;
-    const matchingTransfer = history.transfers.find((transfer) => {
-      if (transfer.direction !== "received") {
-        return false;
-      }
-
-      if (
-        createdAtMs !== undefined &&
-        Number.isFinite(createdAtMs) &&
-        transfer.timestamp + 60_000 < createdAtMs
-      ) {
-        return false;
-      }
-
-      if (
-        input.estimatedReceived &&
-        this.amountEquals(transfer.amount, input.estimatedReceived, 8)
-      ) {
-        return true;
-      }
-
-      if (input.amount && this.amountEquals(transfer.amount, input.amount, 8)) {
-        return true;
-      }
-
-      return false;
-    });
-
-    if (matchingTransfer) {
-      return {
-        status: "arrived",
-        summary: `Detected the bridged GAS on Neo N3 in transfer ${matchingTransfer.txHash}.`,
-        detectionMethod: "neoN3_transfer_history",
-        confidence: "high",
-        matchedTxHash: matchingTransfer.txHash,
-        matchedAmount: matchingTransfer.amount,
-      };
-    }
-
-    return {
-      status: input.sourceStatus.status === "confirmed" ? "pending" : "unknown",
-      summary:
-        input.sourceStatus.status === "confirmed"
-          ? "The source bridge transaction is confirmed, but the destination transfer has not been detected on Neo N3 yet."
-          : "The source bridge transaction has not confirmed yet, so arrival on Neo N3 cannot be verified.",
-      detectionMethod: "neoN3_transfer_history",
-      confidence: "high",
-    };
-  }
-
-  private async detectNeoXBridgeArrival(input: {
-    destinationAddress?: string;
-    amount?: string;
-    estimatedReceived?: string;
-    sourceStatus: TransactionStatus;
-  }): Promise<BridgeStatus["arrival"]> {
-    if (!input.destinationAddress) {
-      return {
-        status: "unknown",
-        summary:
-          "The bridge destination address is missing, so arrival on Neo X cannot be checked.",
-        detectionMethod: "unavailable",
-        confidence: "low",
-      };
-    }
-
-    const balance = await this.getNativeBalance(input.destinationAddress);
-    const targetAmount = input.estimatedReceived ?? input.amount;
-
-    if (targetAmount && this.amountGte(balance.balance, targetAmount, 18)) {
-      return {
-        status: "arrived",
-        summary:
-          "Detected that the Neo X destination balance is at least the expected bridge output. This is a balance-based heuristic and may include prior funds.",
-        detectionMethod: "neoX_balance_heuristic",
-        confidence: "low",
-        matchedAmount: balance.balance,
-      };
-    }
-
-    return {
-      status: input.sourceStatus.status === "confirmed" ? "pending" : "unknown",
-      summary:
-        input.sourceStatus.status === "confirmed"
-          ? "The source bridge transaction is confirmed, but arrival on Neo X could not be verified exactly yet."
-          : "The source bridge transaction has not confirmed yet, so arrival on Neo X cannot be verified.",
-      detectionMethod: "neoX_balance_heuristic",
-      confidence: "low",
-    };
-  }
-
-  private buildBridgeStatusSummary(
-    direction: BridgeGasDirection,
-    sourceStatus: TransactionStatus,
-    arrival: BridgeStatus["arrival"],
-  ): string {
-    const routeLabel =
-      direction === "neoXToNeoN3" ? "Neo X -> Neo N3" : "Neo N3 -> Neo X";
-
-    if (arrival.status === "arrived") {
-      return `${routeLabel} bridge is complete. ${arrival.summary}`;
-    }
-
-    if (sourceStatus.status === "failed") {
-      return `${routeLabel} bridge failed on the source network.`;
-    }
-
-    if (sourceStatus.status === "confirmed") {
-      return `${routeLabel} bridge is confirmed on the source network and waiting for destination arrival.`;
-    }
-
-    if (
-      sourceStatus.status === "pending" ||
-      sourceStatus.status === "submitted"
-    ) {
-      return `${routeLabel} bridge is still pending on the source network.`;
-    }
-
-    return `${routeLabel} bridge could not be found on the source network.`;
-  }
-
-  private amountEquals(left: string, right: string, decimals: number): boolean {
-    return parseUnits(left, decimals) === parseUnits(right, decimals);
-  }
-
-  private amountGte(left: string, right: string, decimals: number): boolean {
-    return parseUnits(left, decimals) >= parseUnits(right, decimals);
   }
 
   private async resolveNeoN3AddressOrName(
@@ -1961,7 +960,7 @@ export class NeoXProvider implements NeoProvider {
   }
 
   private async resolveNeoNsTextRecord(name: string): Promise<string> {
-    const result = await this.requireNeoN3RpcClient().invokeFunction(
+    const result = await this.neoN3RpcClient.invokeFunction(
       this.requireNeoN3NameServiceContractAddress(),
       "resolve",
       [
@@ -2043,15 +1042,6 @@ export class NeoXProvider implements NeoProvider {
     return item.value;
   }
 
-  private normalizeRecord(value: {
-    toJSON?: () => unknown;
-  }): Record<string, unknown> {
-    const normalizedValue =
-      typeof value.toJSON === "function" ? value.toJSON() : value;
-
-    return normalizeResult(normalizedValue) as Record<string, unknown>;
-  }
-
   private normalizeUnknownRecord(
     value: unknown,
   ): Record<string, unknown> | null {
@@ -2060,22 +1050,6 @@ export class NeoXProvider implements NeoProvider {
     }
 
     return normalizeResult(value) as Record<string, unknown>;
-  }
-
-  private isSuccessfulReceiptStatus(status: unknown): boolean {
-    if (typeof status === "number") {
-      return status === 1;
-    }
-
-    if (typeof status === "bigint") {
-      return status === 1n;
-    }
-
-    if (typeof status === "string") {
-      return status === "1" || status.toLowerCase() === "0x1";
-    }
-
-    return status === true;
   }
 
   private extractNeoN3VmState(
@@ -2138,41 +1112,6 @@ export class NeoXProvider implements NeoProvider {
     return undefined;
   }
 
-  private toNeoN3ScriptHash(address: string): string {
-    return `0x${neoWallet.getScriptHashFromAddress(address)}`;
-  }
-
-  private async loadErc20Metadata(
-    contractAddress: string,
-  ): Promise<TokenMetadata> {
-    const normalizedAddress = getAddress(contractAddress);
-    const cached = this.tokenMetadataCache.get(normalizedAddress);
-
-    if (cached) {
-      return cached;
-    }
-
-    const task = (async () => {
-      const contract = new Contract(normalizedAddress, erc20Abi, this.provider);
-      const [symbol, decimals, name] = await Promise.all([
-        contract.symbol(),
-        contract.decimals(),
-        contract.name().catch(() => undefined),
-      ]);
-
-      return {
-        contractAddress: normalizedAddress,
-        symbol: String(symbol).trim(),
-        decimals: Number(decimals),
-        name: name ? String(name).trim() : undefined,
-      };
-    })();
-
-    this.tokenMetadataCache.set(normalizedAddress, task);
-
-    return task;
-  }
-
   private async loadNeoN3Metadata(
     contractHash: string,
   ): Promise<TokenMetadata> {
@@ -2185,11 +1124,11 @@ export class NeoXProvider implements NeoProvider {
     }
 
     if (knownMetadata) {
-      const knownMetadataTask = Promise.resolve(knownMetadata);
+      const task = Promise.resolve(knownMetadata);
 
-      this.neoN3TokenMetadataCache.set(normalizedHash, knownMetadataTask);
+      this.neoN3TokenMetadataCache.set(normalizedHash, task);
 
-      return knownMetadataTask;
+      return task;
     }
 
     const task = (async () => {
@@ -2223,7 +1162,7 @@ export class NeoXProvider implements NeoProvider {
   ): Promise<TokenMetadata> {
     const [info] = await neoApi.getTokenInfos(
       [contractHash],
-      this.requireNeoN3RpcClient(),
+      this.neoN3RpcClient,
     );
 
     return {
@@ -2236,10 +1175,9 @@ export class NeoXProvider implements NeoProvider {
   private async loadNeoN3MetadataFromContract(
     contractHash: string,
   ): Promise<TokenMetadata> {
-    const rpcClient = this.requireNeoN3RpcClient();
     const [symbolResult, decimalsResult] = await Promise.all([
-      rpcClient.invokeFunction(contractHash, "symbol"),
-      rpcClient.invokeFunction(contractHash, "decimals"),
+      this.neoN3RpcClient.invokeFunction(contractHash, "symbol"),
+      this.neoN3RpcClient.invokeFunction(contractHash, "decimals"),
     ]);
     const symbol = this.parseNeoN3StringResult(symbolResult, "symbol").trim();
     const decimals = Number(
@@ -2249,9 +1187,7 @@ export class NeoXProvider implements NeoProvider {
     if (!Number.isInteger(decimals) || decimals < 0 || decimals > 30) {
       throw new NeoRpcError(
         `Neo N3 token ${contractHash} returned an invalid decimals value.`,
-        {
-          decimals,
-        },
+        { decimals },
       );
     }
 
@@ -2280,19 +1216,9 @@ export class NeoXProvider implements NeoProvider {
     };
   }
 
-  private getNativeGasToken(): TokenMetadata {
-    return {
-      contractAddress: this.config.erc20.wrappedGasAddress,
-      symbol: "GAS",
-      decimals: 18,
-      name: "Gas",
-      isNative: true,
-    };
-  }
-
   private getNeoN3GasToken(): TokenMetadata {
     return {
-      contractAddress: this.config.bridge.neoN3GasTokenContract,
+      contractAddress: this.config.neoN3.gasTokenContract,
       symbol: "GAS",
       decimals: 8,
       name: "Gas",
@@ -2310,34 +1236,11 @@ export class NeoXProvider implements NeoProvider {
     };
   }
 
-  private async getTokenBalance(
-    owner: string,
-    token: TokenMetadata,
-  ): Promise<TokenBalance> {
-    if (token.isNative) {
-      return this.getNativeBalance(owner);
-    }
-
-    const contract = new Contract(
-      token.contractAddress,
-      erc20Abi,
-      this.provider,
-    );
-    const rawBalance = (await contract.balanceOf(owner)) as bigint;
-
-    return {
-      ...token,
-      owner,
-      rawBalance: rawBalance.toString(),
-      balance: formatUnits(rawBalance, token.decimals),
-    };
-  }
-
   private async getNeoN3TokenBalance(
     owner: string,
     token: TokenMetadata,
   ): Promise<TokenBalance> {
-    const result = await this.requireNeoN3RpcClient().invokeFunction(
+    const result = await this.neoN3RpcClient.invokeFunction(
       token.contractAddress,
       "balanceOf",
       [neoSc.ContractParam.hash160(neoWallet.getScriptHashFromAddress(owner))],
@@ -2348,7 +1251,7 @@ export class NeoXProvider implements NeoProvider {
       ...token,
       owner,
       rawBalance: rawBalance.toString(),
-      balance: formatUnits(rawBalance, token.decimals),
+      balance: formatDecimalAmount(rawBalance, token.decimals),
     };
   }
 
@@ -2381,9 +1284,8 @@ export class NeoXProvider implements NeoProvider {
       return [];
     }
 
-    const rpcClient = this.requireNeoN3RpcClient();
     const [balances, metadata] = await Promise.all([
-      neoApi.getTokenBalances(owner, contracts, rpcClient),
+      neoApi.getTokenBalances(owner, contracts, this.neoN3RpcClient),
       Promise.all(
         contracts.map((contractHash) =>
           this.safeResolveNeoN3TokenMetadata(contractHash),
@@ -2394,7 +1296,7 @@ export class NeoXProvider implements NeoProvider {
     return metadata
       .map((token, index) => {
         const balance = balances[index];
-        const rawBalance = parseUnits(balance, token.decimals);
+        const rawBalance = parseDecimalAmount(balance, token.decimals);
 
         return {
           ...token,
@@ -2422,7 +1324,12 @@ export class NeoXProvider implements NeoProvider {
     amountInRaw: bigint;
     fromToken: TokenMetadata;
     toToken: TokenMetadata;
-  }): Promise<ResolvedNeoN3SwapPath> {
+  }): Promise<{
+    routeContracts: string[];
+    routeSymbols: string[];
+    tradingPairIds: number[];
+    routeAmountsRaw: bigint[];
+  }> {
     const candidates = await this.buildNeoN3SwapCandidates(
       input.fromToken,
       input.toToken,
@@ -2453,7 +1360,14 @@ export class NeoXProvider implements NeoProvider {
       }),
     );
     const viableQuotes = quotes.filter(
-      (quote): quote is ResolvedNeoN3SwapPath => quote !== undefined,
+      (
+        quote,
+      ): quote is {
+        routeContracts: string[];
+        routeSymbols: string[];
+        tradingPairIds: number[];
+        routeAmountsRaw: bigint[];
+      } => quote !== undefined,
     );
 
     if (viableQuotes.length === 0) {
@@ -2563,7 +1477,7 @@ export class NeoXProvider implements NeoProvider {
 
     for (let index = 0; index < tradingPairIds.length; index += 1) {
       const amountOutRaw = await this.getNeoN3ConvertAmountOut(
-        amountInRaw,
+        routeAmountsRaw[index],
         routeContracts.slice(0, index + 2),
         tradingPairIds.slice(0, index + 1),
       );
@@ -2849,138 +1763,10 @@ export class NeoXProvider implements NeoProvider {
     return normalizeResult(item.value);
   }
 
-  private async buildPreparedTransaction(
-    input: PreparedTransactionInput,
-  ): Promise<PreparedTransaction> {
-    const wallet = this.requireWallet();
-    const sender = wallet.address;
-    const chainId = await this.getChainId();
-    const nonce = await this.provider.getTransactionCount(sender, "pending");
-    const feeData = await this.provider.getFeeData();
-    const estimationRequest: TransactionRequest = {
-      from: sender,
-      to: getAddress(input.to),
-      data: input.data,
-      value: input.value ? BigInt(input.value) : undefined,
-      nonce,
-      chainId,
-    };
-
-    if (
-      feeData.maxFeePerGas !== null &&
-      feeData.maxPriorityFeePerGas !== null
-    ) {
-      estimationRequest.maxFeePerGas = feeData.maxFeePerGas;
-      estimationRequest.maxPriorityFeePerGas = feeData.maxPriorityFeePerGas;
-    } else if (feeData.gasPrice !== null) {
-      estimationRequest.gasPrice = feeData.gasPrice;
-    }
-
-    const gasLimit = await this.provider.estimateGas(estimationRequest);
-    const request: PreparedTransactionRequest = {
-      to: getAddress(input.to),
-      nonce,
-      chainId,
-      gasLimit: gasLimit.toString(),
-      data: input.data,
-      value: input.value,
-      gasPrice: estimationRequest.gasPrice?.toString(),
-      maxFeePerGas: estimationRequest.maxFeePerGas?.toString(),
-      maxPriorityFeePerGas: estimationRequest.maxPriorityFeePerGas?.toString(),
-    };
-
-    return {
-      kind: "transaction",
-      action: input.action,
-      summary: input.summary,
-      unsignedTransaction: JSON.stringify(request),
-      network: input.network ?? "neoX",
-      sender,
-      chainId,
-      nonce,
-      gasLimit: request.gasLimit,
-      gasPrice: request.gasPrice,
-      maxFeePerGas: request.maxFeePerGas,
-      maxPriorityFeePerGas: request.maxPriorityFeePerGas,
-      to: request.to,
-      value: request.value,
-      data: request.data,
-      amount: input.amount,
-      tokenAddress: input.tokenAddress,
-      tokenSymbol: input.tokenSymbol,
-      toTokenAddress: input.toTokenAddress,
-      toTokenSymbol: input.toTokenSymbol,
-      amountOut: input.amountOut,
-      minimumAmountOut: input.minimumAmountOut,
-      slippagePercent: input.slippagePercent,
-      routeSymbols: input.routeSymbols,
-      routeContracts: input.routeContracts,
-      deadlineMinutes: input.deadlineMinutes,
-      deadlineTimestamp: input.deadlineTimestamp,
-      spender: input.spender,
-      contractAddress: input.contractAddress,
-      functionSignature: input.functionSignature,
-      bridgeDirection: input.bridgeDirection,
-      destinationAddress: input.destinationAddress,
-      maxFee: input.maxFee,
-      estimatedReceived: input.estimatedReceived,
-      minimumAmount: input.minimumAmount,
-      maximumAmount: input.maximumAmount,
-      bridgeEtaLowMinutes: input.bridgeEtaLowMinutes,
-      bridgeEtaHighMinutes: input.bridgeEtaHighMinutes,
-      bridgeContractAddress: input.bridgeContractAddress,
-      allowedContracts: input.allowedContracts,
-      request,
-    };
-  }
-
-  private toTransactionRequest(
-    request: PreparedTransactionRequest,
-  ): TransactionRequest {
-    const transactionRequest: TransactionRequest = {
-      to: request.to,
-      nonce: request.nonce,
-      chainId: request.chainId,
-      gasLimit: BigInt(request.gasLimit),
-      data: request.data,
-      value: request.value ? BigInt(request.value) : undefined,
-    };
-
-    if (request.maxFeePerGas && request.maxPriorityFeePerGas) {
-      transactionRequest.maxFeePerGas = BigInt(request.maxFeePerGas);
-      transactionRequest.maxPriorityFeePerGas = BigInt(
-        request.maxPriorityFeePerGas,
-      );
-    } else if (request.gasPrice) {
-      transactionRequest.gasPrice = BigInt(request.gasPrice);
-    }
-
-    return transactionRequest;
-  }
-
-  private async getChainId(): Promise<number> {
-    if (!this.chainIdPromise) {
-      this.chainIdPromise = (async () => {
-        const network = await this.provider.getNetwork();
-        const chainId = Number(network.chainId);
-
-        if (chainId !== this.config.neoXChainId) {
-          throw new ProviderCapabilityError(
-            `Connected chain ID ${chainId} does not match configured NEOX_CHAIN_ID ${this.config.neoXChainId}.`,
-          );
-        }
-
-        return chainId;
-      })();
-    }
-
-    return this.chainIdPromise;
-  }
-
   private async getNeoN3NetworkMagic(): Promise<number> {
     if (!this.neoN3NetworkMagicPromise) {
       this.neoN3NetworkMagicPromise = (async () => {
-        const version = await this.requireNeoN3RpcClient().getVersion();
+        const version = await this.neoN3RpcClient.getVersion();
         const networkMagic = Number(version.protocol.network);
 
         if (!Number.isInteger(networkMagic) || networkMagic <= 0) {
@@ -2995,30 +1781,6 @@ export class NeoXProvider implements NeoProvider {
     }
 
     return this.neoN3NetworkMagicPromise;
-  }
-
-  private requireNeoXBridgeContractAddress(): string {
-    const bridgeContractAddress = this.config.bridge.neoXContract;
-
-    if (!bridgeContractAddress) {
-      throw new ProviderCapabilityError(
-        "Neo X bridge is not configured. Set NEOX_BRIDGE_CONTRACT to enable Neo X -> Neo N3 bridging.",
-      );
-    }
-
-    return bridgeContractAddress;
-  }
-
-  private requireNeoN3BridgeContractAddress(): string {
-    const bridgeContractAddress = this.config.bridge.neoN3Contract;
-
-    if (!bridgeContractAddress) {
-      throw new ProviderCapabilityError(
-        "Neo N3 bridge is not configured. Set NEO_N3_BRIDGE_CONTRACT to enable Neo N3 -> Neo X bridging.",
-      );
-    }
-
-    return bridgeContractAddress;
   }
 
   private requireNeoN3NameServiceContractAddress(): string {
@@ -3095,33 +1857,29 @@ export class NeoXProvider implements NeoProvider {
   > {
     if (!this.neoN3FlamingoTradingPairsPromise) {
       this.neoN3FlamingoTradingPairsPromise = (async () => {
+        const brokerContract =
+          await this.resolveNeoN3FlamingoBrokerContractAddress();
         const pairCounter = Number(
-          await this.invokeNeoN3IntegerRead(
-            await this.resolveNeoN3FlamingoBrokerContractAddress(),
-            "getPairCounter",
-          ),
+          await this.invokeNeoN3IntegerRead(brokerContract, "getPairCounter"),
         );
 
         if (!Number.isInteger(pairCounter) || pairCounter <= 0) {
           return [];
         }
 
-        const pairIds = Array.from({ length: pairCounter }, (_, index) => {
-          return index + 1;
-        });
+        const pairIds = Array.from(
+          { length: pairCounter },
+          (_, index) => index + 1,
+        );
         const pairs = await Promise.all(
           pairIds.map(async (pairId) => {
             const [baseTokenHash, quoteTokenHash] = await Promise.all([
-              this.invokeNeoN3Hash160Read(
-                await this.resolveNeoN3FlamingoBrokerContractAddress(),
-                "getBaseToken",
-                [{ type: "Integer", value: String(pairId) }],
-              ),
-              this.invokeNeoN3Hash160Read(
-                await this.resolveNeoN3FlamingoBrokerContractAddress(),
-                "getQuoteToken",
-                [{ type: "Integer", value: String(pairId) }],
-              ),
+              this.invokeNeoN3Hash160Read(brokerContract, "getBaseToken", [
+                { type: "Integer", value: String(pairId) },
+              ]),
+              this.invokeNeoN3Hash160Read(brokerContract, "getQuoteToken", [
+                { type: "Integer", value: String(pairId) },
+              ]),
             ]);
 
             return {
@@ -3132,9 +1890,9 @@ export class NeoXProvider implements NeoProvider {
           }),
         );
 
-        return pairs.filter((pair) => {
-          return pair.baseTokenHash !== pair.quoteTokenHash;
-        });
+        return pairs.filter(
+          (pair) => pair.baseTokenHash !== pair.quoteTokenHash,
+        );
       })();
     }
 
@@ -3162,7 +1920,7 @@ export class NeoXProvider implements NeoProvider {
     args: unknown[] = [],
   ): Promise<bigint> {
     const target = hash160Schema.parse(contractHash);
-    const result = await this.requireNeoN3RpcClient().invokeFunction(
+    const result = await this.neoN3RpcClient.invokeFunction(
       target,
       operation.trim(),
       args.map((arg) => this.toNeoN3ContractParam(arg)),
@@ -3184,7 +1942,7 @@ export class NeoXProvider implements NeoProvider {
     args: unknown[] = [],
   ): Promise<string> {
     const target = hash160Schema.parse(contractHash);
-    const result = await this.requireNeoN3RpcClient().invokeFunction(
+    const result = await this.neoN3RpcClient.invokeFunction(
       target,
       operation.trim(),
       args.map((arg) => this.toNeoN3ContractParam(arg)),
@@ -3258,7 +2016,7 @@ export class NeoXProvider implements NeoProvider {
   ): Promise<boolean> {
     try {
       const contractState =
-        await this.requireNeoN3RpcClient().getContractState(contractHash);
+        await this.neoN3RpcClient.getContractState(contractHash);
       const contractOperations = new Set(
         contractState.manifest.abi.methods.map((method) => method.name),
       );
@@ -3271,28 +2029,6 @@ export class NeoXProvider implements NeoProvider {
     }
   }
 
-  private requireNeoN3RpcUrl(): string {
-    const rpcUrl = this.config.neoN3.rpcUrl;
-
-    if (!rpcUrl) {
-      throw new ProviderCapabilityError(
-        "Neo N3 RPC is not configured. Set NEO_N3_RPC_URL to enable Neo N3 bridging.",
-      );
-    }
-
-    return rpcUrl;
-  }
-
-  private requireNeoN3RpcClient(): InstanceType<typeof neoRpc.RPCClient> {
-    if (!this.neoN3RpcClient) {
-      throw new ProviderCapabilityError(
-        "Neo N3 RPC is not configured. Set NEO_N3_RPC_URL to enable Neo N3 bridging.",
-      );
-    }
-
-    return this.neoN3RpcClient;
-  }
-
   private requireNeoN3Wallet(): InstanceType<typeof neoWallet.Account> {
     if (!this.neoN3Wallet) {
       throw new WalletUnavailableError(
@@ -3302,18 +2038,8 @@ export class NeoXProvider implements NeoProvider {
 
     return this.neoN3Wallet;
   }
-
-  private requireWallet(): Wallet {
-    if (!this.wallet) {
-      throw new WalletUnavailableError(
-        "Set NEO_X_WALLET_PRIVATE_KEY to enable Neo X write actions.",
-      );
-    }
-
-    return this.wallet;
-  }
 }
 
 export function createNeoProvider(config: AppConfig): NeoProvider {
-  return new NeoXProvider(config);
+  return new NeoN3Provider(config);
 }

@@ -20,7 +20,7 @@ const plannerResponseSchema = z.object({
   explanation: z.string().optional(),
 });
 
-const addressPattern = /(0x[a-fA-F0-9]{40})/;
+const contractHashPattern = /\b(0x[a-fA-F0-9]{40})\b/;
 const neoNsPattern =
   /\b([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*\.neo)\b/i;
 
@@ -104,28 +104,17 @@ export class PlannerService {
       trimmedMessage,
       context,
     );
-    const neoN3Recipient = this.extractNeoN3AddressOrName(trimmedMessage);
-    const implicitNeoN3Address =
-      neoN3Recipient ??
+    const neoN3Recipient =
+      this.extractNeoN3AddressOrName(trimmedMessage) ??
       (resolvedAddress && this.isNeoN3AddressReference(resolvedAddress)
         ? resolvedAddress
         : undefined);
-    const implicitNeoXAddress =
-      resolvedAddress && this.isEvmAddressReference(resolvedAddress)
-        ? resolvedAddress
-        : undefined;
-    const isNeoN3Message =
-      /\bneo\s*n3\b/.test(lowerMessage) ||
-      /\bon\s+n3\b/.test(lowerMessage) ||
-      /\bn3\b/.test(lowerMessage) ||
-      Boolean(implicitNeoN3Address);
+    const isSwapMessage =
+      /\bswap\b/.test(lowerMessage) ||
+      /\bflamingo\b/.test(lowerMessage) ||
+      /\bbest route\b/.test(lowerMessage) ||
+      /\bmin(?:imum)? received\b/.test(lowerMessage);
     const swapParameters = this.extractSwapParameters(trimmedMessage);
-    const isFlamingoSwapMessage =
-      (/\bswap\b/.test(lowerMessage) ||
-        /\bflamingo\b/.test(lowerMessage) ||
-        /\bbest route\b/.test(lowerMessage) ||
-        /\bmin(?:imum)? received\b/.test(lowerMessage)) &&
-      (isNeoN3Message || /\bflamingo\b/.test(lowerMessage));
     const isImperativeSwap = /^\s*swap\b/i.test(trimmedMessage);
 
     if (this.isConfirmMessage(lowerMessage)) {
@@ -152,7 +141,7 @@ export class PlannerService {
       };
     }
 
-    if (isFlamingoSwapMessage) {
+    if (isSwapMessage) {
       const missingInputs = [];
 
       if (!swapParameters.amount) {
@@ -187,7 +176,7 @@ export class PlannerService {
           arguments: swapArguments,
           needsConfirmation: false,
           missingInputs,
-          explanation: "Detected a Flamingo swap quote request on Neo N3.",
+          explanation: "Detected a Neo N3 Flamingo swap quote request.",
         };
       }
 
@@ -198,125 +187,8 @@ export class PlannerService {
         needsConfirmation: true,
         missingInputs,
         explanation: swapParameters.force
-          ? "Detected a force Flamingo swap request on Neo N3."
-          : "Detected a Flamingo swap request on Neo N3.",
-      };
-    }
-
-    const bridgeDirection = this.resolveBridgeDirection(lowerMessage);
-    const bridgeAmountMatch = trimmedMessage.match(
-      /\b(?:bridge|deposit|withdraw)\s+([0-9]+(?:\.[0-9]+)?)\s+gas\b/i,
-    );
-    const bridgeRequest =
-      bridgeDirection &&
-      /\bgas\b/.test(lowerMessage) &&
-      /\b(?:bridge|deposit|withdraw)\b/.test(lowerMessage);
-    const wantsBridgeQuote =
-      Boolean(bridgeDirection) &&
-      (/\bbridge\b.*\b(?:fee|quote|cost|eta|limit|limits|min|max)\b/.test(
-        lowerMessage,
-      ) ||
-        /\b(?:fee|quote|cost|eta|limit|limits|min|max)\b.*\bbridge\b/.test(
-          lowerMessage,
-        ) ||
-        /\bexpected received\b/.test(lowerMessage));
-    const wantsBridgeStatus =
-      /\bbridge\b.*\b(?:status|track|arrived|arrival|complete|completed)\b/.test(
-        lowerMessage,
-      ) ||
-      /\bdid\b.*\bbridge\b.*\barrive\b/.test(lowerMessage) ||
-      /\bstatus of (?:my |the )?last bridge\b/.test(lowerMessage);
-
-    if (wantsBridgeQuote && bridgeDirection) {
-      const destination = this.resolveBridgeDestination(
-        trimmedMessage,
-        bridgeDirection,
-        context,
-      );
-
-      return {
-        intent: "get_gas_bridge_quote",
-        tool: "getGasBridgeQuote",
-        arguments: {
-          direction: bridgeDirection,
-          amount: bridgeAmountMatch?.[1],
-          to: destination,
-        },
-        needsConfirmation: false,
-        missingInputs: [],
-        explanation: "Detected a bridge quote request.",
-      };
-    }
-
-    if (wantsBridgeStatus) {
-      return {
-        intent: "get_bridge_status",
-        tool: "getBridgeStatus",
-        arguments: {},
-        needsConfirmation: false,
-        missingInputs: [],
-        explanation: "Detected a bridge status request.",
-      };
-    }
-
-    if (bridgeDirection && bridgeAmountMatch) {
-      const destination = this.resolveBridgeDestination(
-        trimmedMessage,
-        bridgeDirection,
-        context,
-      );
-
-      return {
-        intent: "bridge_gas",
-        tool: "bridgeGas",
-        arguments: {
-          direction: bridgeDirection,
-          amount: bridgeAmountMatch[1],
-          to: destination,
-        },
-        needsConfirmation: true,
-        missingInputs: [],
-        explanation: "Detected a GAS bridge request.",
-      };
-    }
-
-    if (bridgeDirection && bridgeRequest) {
-      const destination = this.resolveBridgeDestination(
-        trimmedMessage,
-        bridgeDirection,
-        context,
-      );
-
-      return {
-        intent: "bridge_gas",
-        tool: "bridgeGas",
-        arguments: {
-          direction: bridgeDirection,
-          to: destination,
-        },
-        needsConfirmation: true,
-        missingInputs: ["amount"],
-        explanation:
-          "Detected a GAS bridge request that still needs an amount.",
-      };
-    }
-
-    const approveMatch = trimmedMessage.match(
-      /\bapprove\s+([0-9]+(?:\.[0-9]+)?)\s+([A-Za-z0-9._:-]+)(?:\s+(?:for|to)\s+(0x[a-fA-F0-9]{40}))?/i,
-    );
-
-    if (approveMatch) {
-      return {
-        intent: "approve_erc20",
-        tool: "approveErc20",
-        arguments: {
-          amount: approveMatch[1],
-          token: approveMatch[2],
-          spender: approveMatch[3],
-        },
-        needsConfirmation: true,
-        missingInputs: approveMatch[3] ? [] : ["spender"],
-        explanation: "Detected an ERC-20 approval request.",
+          ? "Detected a forced Neo N3 Flamingo swap request."
+          : "Detected a Neo N3 Flamingo swap request.",
       };
     }
 
@@ -334,79 +206,18 @@ export class PlannerService {
         lowerMessage,
       ) ||
       lowerMessage.includes("all balances");
-    const wantsCombinedPortfolioOverview =
-      lowerMessage.includes("all balances") ||
-      /\bcombined\b/.test(lowerMessage) ||
-      /\bboth\b.*\b(?:portfolio|balances|holdings)\b/.test(lowerMessage) ||
-      /\b(?:portfolio|balances|holdings)\b.*\bboth\b/.test(lowerMessage) ||
-      (/\bneo\s*x\b/.test(lowerMessage) &&
-        (/\bneo\s*n3\b/.test(lowerMessage) ||
-          /\bon\s+n3\b/.test(lowerMessage)));
-    const wantsNeoXPortfolioOverview =
-      wantsPortfolioOverview &&
-      /\bneo\s*x\b/.test(lowerMessage) &&
-      !wantsCombinedPortfolioOverview;
-    const wantsNeoN3PortfolioOverview =
-      wantsPortfolioOverview &&
-      (/\bneo\s*n3\b/.test(lowerMessage) ||
-        /\bon\s+n3\b/.test(lowerMessage) ||
-        /\bn3\s+(?:portfolio|balances|holdings)\b/.test(lowerMessage) ||
-        /\b(?:portfolio|balances|holdings)\s+(?:on\s+)?n3\b/.test(
-          lowerMessage,
-        ));
-    const portfolioAddress =
-      implicitNeoXAddress ??
-      (requestedOwnPortfolio ||
-      wantsCombinedPortfolioOverview ||
-      wantsNeoXPortfolioOverview
-        ? context.neoXWalletAddress
-        : undefined);
-    const portfolioNeoN3Address =
-      implicitNeoN3Address ??
-      (wantsCombinedPortfolioOverview || wantsNeoN3PortfolioOverview
-        ? context.neoN3WalletAddress
-        : undefined);
-    const shouldPreferNeoN3PortfolioOverview =
-      wantsPortfolioOverview &&
-      !wantsCombinedPortfolioOverview &&
-      !wantsNeoXPortfolioOverview &&
-      Boolean(
-        isNeoN3Message || implicitNeoN3Address || context.neoN3WalletAddress,
-      );
+    const portfolioAddress = neoN3Recipient ?? context.neoN3WalletAddress;
 
-    if (wantsNeoN3PortfolioOverview || shouldPreferNeoN3PortfolioOverview) {
+    if (wantsPortfolioOverview) {
       return {
         intent: "get_neo_n3_portfolio_overview",
         tool: "getNeoN3PortfolioOverview",
         arguments: {
-          address: implicitNeoN3Address ?? context.neoN3WalletAddress,
-        },
-        needsConfirmation: false,
-        missingInputs: [],
-        explanation:
-          wantsNeoN3PortfolioOverview || isNeoN3Message
-            ? "Detected a Neo N3 portfolio overview request."
-            : "Detected a Neo N3-first portfolio overview request.",
-      };
-    }
-
-    if (wantsPortfolioOverview) {
-      return {
-        intent: "get_portfolio_overview",
-        tool: "getPortfolioOverview",
-        arguments: {
           address: portfolioAddress,
-          neoN3Address: portfolioNeoN3Address,
         },
         needsConfirmation: false,
-        missingInputs:
-          portfolioAddress ||
-          portfolioNeoN3Address ||
-          context.neoXWalletAddress ||
-          context.neoN3WalletAddress
-            ? []
-            : ["address"],
-        explanation: "Detected a portfolio overview request.",
+        missingInputs: portfolioAddress ? [] : ["address"],
+        explanation: "Detected a Neo N3 portfolio overview request.",
       };
     }
 
@@ -414,27 +225,28 @@ export class PlannerService {
       /\b(?:last|recent)\s+(\d+)\s+(?:transfers|token transfers|nep-17 transfers)\b/i,
     );
     const wantsNeoN3TransferHistory =
-      isNeoN3Message &&
-      (/\b(?:transfer|token|nep-17)\s+history\b/.test(lowerMessage) ||
-        /\brecent\b.*\b(?:transfers|token transfers|nep-17 transfers)\b/.test(
-          lowerMessage,
-        ) ||
-        /\bshow\b.*\b(?:transfers|token transfers|nep-17 transfers)\b/.test(
-          lowerMessage,
-        ));
+      /\b(?:transfer|token|nep-17)\s+history\b/.test(lowerMessage) ||
+      /\brecent\b.*\b(?:transfers|token transfers|nep-17 transfers)\b/.test(
+        lowerMessage,
+      ) ||
+      /\bshow\b.*\b(?:transfers|token transfers|nep-17 transfers)\b/.test(
+        lowerMessage,
+      );
 
     if (wantsNeoN3TransferHistory) {
+      const address = neoN3Recipient ?? context.neoN3WalletAddress;
+
       return {
         intent: "get_neo_n3_transfer_history",
         tool: "getNeoN3TransferHistory",
         arguments: {
-          address: neoN3Recipient,
+          address,
           limit: neoN3TransferHistoryLimitMatch
             ? Number(neoN3TransferHistoryLimitMatch[1])
             : undefined,
         },
         needsConfirmation: false,
-        missingInputs: [],
+        missingInputs: address ? [] : ["address"],
         explanation: "Detected a Neo N3 transfer history request.",
       };
     }
@@ -474,14 +286,13 @@ export class PlannerService {
       /\b(?:activity|history)\b.*\b(?:transactions|txs|actions)\b/.test(
         lowerMessage,
       );
-    const recentActionsAddress = resolvedAddress ?? neoN3Recipient;
 
     if (wantsRecentActions) {
       return {
         intent: "get_recent_actions",
         tool: "getRecentActions",
         arguments: {
-          address: recentActionsAddress,
+          address: neoN3Recipient,
           limit: recentActionsLimitMatch
             ? Number(recentActionsLimitMatch[1])
             : undefined,
@@ -492,21 +303,11 @@ export class PlannerService {
       };
     }
 
-    const sendGasMatch = trimmedMessage.match(
-      /\bsend\s+([0-9]+(?:\.[0-9]+)?)\s+gas\s+(?:to\s+)?(0x[a-fA-F0-9]{40})/i,
-    );
     const sendAmountMatch = trimmedMessage.match(
       /\bsend\s+([0-9]+(?:\.[0-9]+)?)\s+gas\b/i,
     );
-    const isBridgeRequest = /\b(?:bridge|deposit|withdraw)\b/.test(
-      lowerMessage,
-    );
 
-    if (
-      sendAmountMatch &&
-      !isBridgeRequest &&
-      this.prefersNeoN3Transfer(lowerMessage, neoN3Recipient)
-    ) {
+    if (sendAmountMatch) {
       return {
         intent: "send_neo_n3_gas",
         tool: "sendNeoN3Gas",
@@ -520,34 +321,12 @@ export class PlannerService {
       };
     }
 
-    if (sendGasMatch) {
-      return {
-        intent: "send_gas",
-        tool: "sendGas",
-        arguments: {
-          amount: sendGasMatch[1],
-          to: sendGasMatch[2],
-        },
-        needsConfirmation: true,
-        missingInputs: [],
-        explanation: "Detected a native GAS transfer request.",
-      };
-    }
-
-    const sendTokenMatch = trimmedMessage.match(
-      /\bsend\s+([0-9]+(?:\.[0-9]+)?)\s+([A-Za-z0-9._:-]+)\s+(?:to\s+)?(0x[a-fA-F0-9]{40})/i,
-    );
     const sendNeoN3TokenMatch =
       trimmedMessage.match(
         /\bsend\s+([0-9]+(?:\.[0-9]+)?)\s+([A-Za-z0-9._:-]+)\b/i,
       ) ?? undefined;
 
-    if (
-      sendNeoN3TokenMatch &&
-      sendNeoN3TokenMatch[2].toLowerCase() !== "gas" &&
-      !isBridgeRequest &&
-      this.prefersNeoN3Transfer(lowerMessage, neoN3Recipient)
-    ) {
+    if (sendNeoN3TokenMatch && sendNeoN3TokenMatch[2].toLowerCase() !== "gas") {
       return {
         intent: "send_neo_n3_token",
         tool: "sendNeoN3Token",
@@ -562,50 +341,24 @@ export class PlannerService {
       };
     }
 
-    if (sendTokenMatch && sendTokenMatch[2].toLowerCase() !== "gas") {
-      return {
-        intent: "send_erc20",
-        tool: "sendErc20",
-        arguments: {
-          amount: sendTokenMatch[1],
-          token: sendTokenMatch[2],
-          to: sendTokenMatch[3],
-        },
-        needsConfirmation: true,
-        missingInputs: [],
-        explanation: "Detected an ERC-20 transfer request.",
-      };
-    }
-
     const asksGasBalance =
       lowerMessage.includes("gas balance") ||
       /\bhow much\b.*\bgas\b/.test(lowerMessage) ||
       /\bbalance\b.*\bgas\b/.test(lowerMessage);
 
-    if (asksGasBalance && isNeoN3Message) {
+    if (asksGasBalance) {
+      const address = neoN3Recipient ?? context.neoN3WalletAddress;
+
       return {
         intent: "get_neo_n3_token_balance",
         tool: "getNeoN3TokenBalances",
         arguments: {
-          address: implicitNeoN3Address,
+          address,
           token: "GAS",
         },
         needsConfirmation: false,
-        missingInputs: [],
+        missingInputs: address ? [] : ["address"],
         explanation: "Detected a Neo N3 GAS balance request.",
-      };
-    }
-
-    if (asksGasBalance) {
-      return {
-        intent: "get_balance",
-        tool: "getBalance",
-        arguments: {
-          address: implicitNeoXAddress,
-        },
-        needsConfirmation: false,
-        missingInputs: implicitNeoXAddress ? [] : ["address"],
-        explanation: "Detected a native GAS balance request.",
       };
     }
 
@@ -621,63 +374,37 @@ export class PlannerService {
       specificTokenBalanceMatch &&
       specificTokenBalanceMatch[1].toLowerCase() !== "gas"
     ) {
-      if (isNeoN3Message || implicitNeoN3Address) {
-        return {
-          intent: "get_neo_n3_token_balance",
-          tool: "getNeoN3TokenBalances",
-          arguments: {
-            address: implicitNeoN3Address,
-            token: specificTokenBalanceMatch[1],
-          },
-          needsConfirmation: false,
-          missingInputs: [],
-          explanation: "Detected a Neo N3 token balance request.",
-        };
-      }
+      const address = neoN3Recipient ?? context.neoN3WalletAddress;
 
       return {
-        intent: "get_token_balance",
-        tool: "getTokenBalances",
+        intent: "get_neo_n3_token_balance",
+        tool: "getNeoN3TokenBalances",
         arguments: {
-          address: implicitNeoXAddress,
+          address,
           token: specificTokenBalanceMatch[1],
         },
         needsConfirmation: false,
-        missingInputs: implicitNeoXAddress ? [] : ["address"],
-        explanation: "Detected a token balance request.",
+        missingInputs: address ? [] : ["address"],
+        explanation: "Detected a Neo N3 token balance request.",
       };
     }
 
     if (
       lowerMessage.includes("token balances") ||
-      lowerMessage.includes("erc20 balances") ||
+      lowerMessage.includes("nep-17 balances") ||
       lowerMessage.includes("all balances")
     ) {
-      if (
-        (isNeoN3Message || implicitNeoN3Address) &&
-        !lowerMessage.includes("erc20")
-      ) {
-        return {
-          intent: "get_neo_n3_token_balances",
-          tool: "getNeoN3TokenBalances",
-          arguments: {
-            address: implicitNeoN3Address,
-          },
-          needsConfirmation: false,
-          missingInputs: [],
-          explanation: "Detected a Neo N3 token balance request.",
-        };
-      }
+      const address = neoN3Recipient ?? context.neoN3WalletAddress;
 
       return {
-        intent: "get_token_balances",
-        tool: "getTokenBalances",
+        intent: "get_neo_n3_token_balances",
+        tool: "getNeoN3TokenBalances",
         arguments: {
-          address: implicitNeoXAddress,
+          address,
         },
         needsConfirmation: false,
-        missingInputs: implicitNeoXAddress ? [] : ["address"],
-        explanation: "Detected a tracked ERC-20 balance request.",
+        missingInputs: address ? [] : ["address"],
+        explanation: "Detected a Neo N3 token balance request.",
       };
     }
 
@@ -724,13 +451,7 @@ export class PlannerService {
       };
     }
 
-    const contractAddressMatch = trimmedMessage.match(addressPattern);
-    const readSignatureMatch = trimmedMessage.match(
-      /\b(?:call|read|invoke)\s+([A-Za-z_][A-Za-z0-9_]*\([^)]*\))/i,
-    );
-    const writeSignatureMatch = trimmedMessage.match(
-      /\b(?:prepare|write|send)\s+([A-Za-z_][A-Za-z0-9_]*\([^)]*\))/i,
-    );
+    const contractHashMatch = trimmedMessage.match(contractHashPattern);
     const neoN3ReadOperationMatch = trimmedMessage.match(
       /\b(?:call|read|invoke)\s+([A-Za-z_][A-Za-z0-9_]*)\b/i,
     );
@@ -738,12 +459,12 @@ export class PlannerService {
       /\b(?:prepare|write)\s+([A-Za-z_][A-Za-z0-9_]*)\b/i,
     );
 
-    if (isNeoN3Message && contractAddressMatch && neoN3ReadOperationMatch) {
+    if (contractHashMatch && neoN3ReadOperationMatch) {
       return {
         intent: "invoke_neo_n3_read",
         tool: "invokeNeoN3Read",
         arguments: {
-          contractHash: contractAddressMatch[1],
+          contractHash: contractHashMatch[1],
           operation: neoN3ReadOperationMatch[1],
           args: [],
         },
@@ -753,12 +474,12 @@ export class PlannerService {
       };
     }
 
-    if (isNeoN3Message && contractAddressMatch && neoN3WriteOperationMatch) {
+    if (contractHashMatch && neoN3WriteOperationMatch) {
       return {
         intent: "prepare_neo_n3_contract_write",
         tool: "prepareNeoN3ContractWrite",
         arguments: {
-          contractHash: contractAddressMatch[1],
+          contractHash: contractHashMatch[1],
           operation: neoN3WriteOperationMatch[1],
           args: [],
         },
@@ -768,54 +489,14 @@ export class PlannerService {
       };
     }
 
-    if (contractAddressMatch && readSignatureMatch) {
-      return {
-        intent: "invoke_read",
-        tool: "invokeRead",
-        arguments: {
-          contractAddress: contractAddressMatch[1],
-          functionSignature: readSignatureMatch[1],
-          args: [],
-        },
-        needsConfirmation: false,
-        missingInputs: [],
-        explanation: "Detected a read-only contract invocation request.",
-      };
-    }
-
-    if (contractAddressMatch && writeSignatureMatch) {
-      return {
-        intent: "prepare_contract_write",
-        tool: "prepareContractWrite",
-        arguments: {
-          contractAddress: contractAddressMatch[1],
-          functionSignature: writeSignatureMatch[1],
-          args: [],
-        },
-        needsConfirmation: true,
-        missingInputs: [],
-        explanation: "Detected a contract write preparation request.",
-      };
-    }
-
     if (
       /\bwallet address\b/.test(lowerMessage) ||
-      /\bmy(?:\s+neo(?:\s*x|\s*n3))?\s+address\b/.test(lowerMessage)
+      /\bmy\s+address\b/.test(lowerMessage)
     ) {
-      const network =
-        /\bneo\s*x\b/.test(lowerMessage) || /\bevm\b/.test(lowerMessage)
-          ? "neoX"
-          : /\bneo\s*n3\b/.test(lowerMessage) ||
-              /\bon\s+n3\b/.test(lowerMessage)
-            ? "neoN3"
-            : undefined;
-
       return {
         intent: "get_wallet_address",
         tool: "getWalletAddress",
-        arguments: {
-          network,
-        },
+        arguments: {},
         needsConfirmation: false,
         missingInputs: [],
         explanation: "Detected a wallet address request.",
@@ -829,7 +510,7 @@ export class PlannerService {
       needsConfirmation: false,
       missingInputs: [],
       explanation:
-        "I could not map that request to a supported Neo N3 or Neo X action. Try a balance lookup, block or transaction lookup, bridge, approval, contract call, or transfer request.",
+        "I could not map that request to a supported Neo N3 action. Try a balance lookup, block or transaction lookup, contract call, transfer, or Flamingo swap request.",
     };
   }
 
@@ -850,64 +531,14 @@ export class PlannerService {
     return this.tools.some((entry) => entry.name === tool);
   }
 
-  private resolveBridgeDirection(
-    message: string,
-  ): "neoN3ToNeoX" | "neoXToNeoN3" | undefined {
-    if (/from\s+neo\s*n3\b.*\bto\s+neo\s*x\b/.test(message)) {
-      return "neoN3ToNeoX";
-    }
-
-    if (/from\s+neo\s*x\b.*\bto\s+neo\s*n3\b/.test(message)) {
-      return "neoXToNeoN3";
-    }
-
-    if (/\bdeposit\b/.test(message) && /\bneo\s*x\b/.test(message)) {
-      return "neoN3ToNeoX";
-    }
-
-    if (/\bwithdraw\b/.test(message) && /\bneo\s*n3\b/.test(message)) {
-      return "neoXToNeoN3";
-    }
-
-    if (/\bto\s+neo\s*x\b/.test(message)) {
-      return "neoN3ToNeoX";
-    }
-
-    if (/\bto\s+neo\s*n3\b/.test(message)) {
-      return "neoXToNeoN3";
-    }
-
-    return undefined;
-  }
-
-  private resolveBridgeDestination(
-    message: string,
-    direction: "neoN3ToNeoX" | "neoXToNeoN3",
-    context: PlannerContext,
-  ): string | undefined {
-    if (direction === "neoN3ToNeoX") {
-      const resolvedAddress = this.resolveAddressReference(message, context);
-
-      if (resolvedAddress && this.isEvmAddressReference(resolvedAddress)) {
-        return resolvedAddress;
-      }
-
-      return context.neoXWalletAddress;
-    }
-
-    return (
-      this.extractNeoN3AddressOrName(message) ?? context.neoN3WalletAddress
-    );
-  }
-
   private resolveAddressReference(
     message: string,
     context: PlannerContext,
   ): string | undefined {
-    const explicitAddressMatch = message.match(addressPattern);
+    const explicitAddress = this.extractNeoN3AddressOrName(message);
 
-    if (explicitAddressMatch) {
-      return explicitAddressMatch[1];
+    if (explicitAddress) {
+      return explicitAddress;
     }
 
     const normalizedMessage = message.toLowerCase();
@@ -949,31 +580,8 @@ export class PlannerService {
     return undefined;
   }
 
-  private isEvmAddressReference(address: string): boolean {
-    return addressPattern.test(address);
-  }
-
   private isNeoN3AddressReference(address: string): boolean {
     return isNeoN3Address(address) || neoNsPattern.test(address);
-  }
-
-  private prefersNeoN3Transfer(
-    message: string,
-    recipient: string | undefined,
-  ): boolean {
-    if (/\bneo\s*x\b/.test(message)) {
-      return false;
-    }
-
-    if (/\bneo\s*n3\b|\bon\s+n3\b/.test(message)) {
-      return true;
-    }
-
-    if (recipient) {
-      return true;
-    }
-
-    return false;
   }
 
   private extractSwapParameters(message: string): {

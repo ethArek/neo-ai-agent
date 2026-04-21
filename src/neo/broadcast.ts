@@ -16,7 +16,7 @@ export function createBroadcastResult(
     txHash,
     sender: prepared.sender,
     summary: toBroadcastSummary(prepared.summary),
-    network: prepared.network ?? "neoX",
+    network: prepared.network,
   };
 }
 

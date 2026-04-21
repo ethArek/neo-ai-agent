@@ -12,7 +12,6 @@ interface AgentSession {
   pendingAction?: PendingToolAction;
   draftAction?: DraftToolAction;
   walletAddress?: string;
-  neoXWalletAddress?: string;
   neoN3WalletAddress?: string;
   lastReferencedAddress?: string;
   recentBroadcasts: BroadcastActivity[];
@@ -90,31 +89,10 @@ export class SessionStore {
     const session = this.getOrCreate(sessionId);
 
     session.walletAddress = address;
+    session.neoN3WalletAddress = address;
 
     if (!session.lastReferencedAddress) {
       session.lastReferencedAddress = address;
-    }
-
-    session.updatedAt = Date.now();
-  }
-
-  public setWalletAddresses(
-    sessionId: string,
-    addresses: {
-      neoXWalletAddress?: string;
-      neoN3WalletAddress?: string;
-    },
-  ): void {
-    const session = this.getOrCreate(sessionId);
-    const primaryWalletAddress =
-      addresses.neoN3WalletAddress ?? addresses.neoXWalletAddress;
-
-    session.neoXWalletAddress = addresses.neoXWalletAddress;
-    session.neoN3WalletAddress = addresses.neoN3WalletAddress;
-    session.walletAddress = primaryWalletAddress;
-
-    if (!session.lastReferencedAddress && primaryWalletAddress) {
-      session.lastReferencedAddress = primaryWalletAddress;
     }
 
     session.updatedAt = Date.now();
@@ -147,7 +125,6 @@ export class SessionStore {
     return {
       id: session.id,
       walletAddress: session.walletAddress,
-      neoXWalletAddress: session.neoXWalletAddress,
       neoN3WalletAddress: session.neoN3WalletAddress,
       lastReferencedAddress: session.lastReferencedAddress,
       recentBroadcasts: [...session.recentBroadcasts],

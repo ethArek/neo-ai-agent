@@ -1,36 +1,54 @@
 import { z } from "zod";
 
-import { hash256Schema } from "../core/validation";
 import type { ToolDefinition } from "../agent/types";
+import { hash256Schema } from "../core/validation";
 
 const inputSchema = z
   .object({
     height: z.number().int().nonnegative().optional(),
     hash: hash256Schema.optional(),
   })
-  .refine((value) => value.height !== undefined || value.hash !== undefined, {
-    message: "Provide a block height or block hash.",
+  .superRefine((value, refinementContext) => {
+    if (value.height === undefined && value.hash === undefined) {
+      refinementContext.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Provide either a block height or block hash.",
+      });
+    }
+
+    if (value.height !== undefined && value.hash !== undefined) {
+      refinementContext.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Provide either a block height or block hash, not both.",
+      });
+    }
   });
 
 type Input = z.infer<typeof inputSchema>;
 
-export const getBlockTool: ToolDefinition<Input> = {
+export const getBlockTool: ToolDefinition<Input, unknown> = {
   name: "getBlock",
-  description: "Fetch Neo X block details by height or block hash.",
-  argumentsDescription: '{ "height"?: number, "hash"?: "32-byte block hash" }',
+  description: "Fetch Neo N3 block details by height or block hash.",
+  argumentsDescription: '{ "height"?: 123456, "hash"?: "block hash" }',
   readOnly: true,
   dangerous: false,
   schema: inputSchema,
   async execute(input, context) {
     const parsed = inputSchema.parse(input);
-    const block = await context.neo.getBlock(parsed);
-    const label =
-      parsed.height !== undefined
-        ? `height ${parsed.height}`
-        : `hash ${parsed.hash}`;
+    const reference = parsed.hash
+      ? {
+          hash: parsed.hash,
+        }
+      : {
+          height: parsed.height,
+        };
+    const block = await context.neo.getBlock(reference);
+    const label = parsed.hash
+      ? `hash ${parsed.hash}`
+      : `height ${parsed.height}`;
 
     return {
-      message: `Loaded block for ${label}.`,
+      message: `Loaded Neo N3 block ${label}.`,
       data: block,
     };
   },

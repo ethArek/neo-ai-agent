@@ -4,7 +4,9 @@ describe("createCliTheme", () => {
   it("returns plain text when colors are disabled", () => {
     const theme = createCliTheme(false);
 
-    expect(theme.renderLabel("Tool", "getBalance")).toBe("Tool: getBalance");
+    expect(theme.renderLabel("Tool", "sendNeoN3Gas")).toBe(
+      "Tool: sendNeoN3Gas",
+    );
     expect(theme.renderPrompt()).toBe("neo> ");
     expect(theme.renderJson({ amount: 1, confirmed: true })).toBe(
       JSON.stringify(

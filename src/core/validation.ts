@@ -1,5 +1,4 @@
 import { wallet as neoWallet } from "@cityofzion/neon-js";
-import { getAddress, isAddress } from "ethers";
 import { z } from "zod";
 
 const hex256Pattern = /^(0x)?[0-9a-fA-F]{64}$/;
@@ -38,10 +37,6 @@ export function isPositiveDecimal(value: string): boolean {
   return Number(value) > 0;
 }
 
-export function normalizeAddress(value: string): string {
-  return getAddress(value);
-}
-
 export function isNeoN3Address(value: string): boolean {
   return neoWallet.isAddress(value);
 }
@@ -53,13 +48,6 @@ export function normalizeNeoNsName(value: string): string {
 export function isNeoNsName(value: string): boolean {
   return neoNsNamePattern.test(value.trim());
 }
-
-export const evmAddressSchema = z
-  .string()
-  .trim()
-  .min(1, "Address is required.")
-  .refine((value) => isAddress(value), "Invalid EVM address.")
-  .transform((value) => normalizeAddress(value));
 
 export const hash256Schema = z
   .string()

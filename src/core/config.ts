@@ -3,17 +3,12 @@ import dotenv from "dotenv";
 import { z } from "zod";
 
 import { ValidationError } from "./errors";
-import { evmAddressSchema, hash160Schema } from "./validation";
+import { hash160Schema } from "./validation";
 
 dotenv.config();
 
-const defaultNeoXMainnetRpcUrl = "https://mainnet-1.rpc.banelabs.org";
-const defaultNeoXChainId = 47_763;
-const defaultNeoXTestnetChainId = 12_227_332;
 const defaultNeoN3MainnetRpcUrl = "https://n3seed1.ngd.network:10332";
 const defaultNeoN3TestnetRpcUrl = "https://rpc.t5.n3.nspcc.ru:20331/";
-const defaultNeoXBridgeContract = "0x1212000000000000000000000000000000000004";
-const defaultNeoN3BridgeContract = "0xbb19cfc864b73159277e1fd39694b3fd5fc613d2";
 const defaultNeoN3GasTokenContract = `0x${neoConst.NATIVE_CONTRACT_HASH.GasToken}`;
 const defaultNeoN3MainnetNnsContract =
   "0x50ac1c37690cc2cfc594472833cf57505d5f46de";
@@ -31,10 +26,6 @@ const defaultNeoN3MainnetFlamingoRouterContract =
   "0xde3a4b093abbd07e9a69cdec88a54d9a1fe14975";
 const defaultNeoN3TestnetFlamingoRouterContract =
   "0x9f4dd9684638f839f3f62cc3440c3f1c8bad541b";
-const defaultNeoXWrappedGasMainnetAddress =
-  "0xdE41591ED1f8ED1484aC2CD8ca0876428de60EfF";
-const defaultNeoXWrappedGasTestnetAddress =
-  "0x1CE16390FD09040486221e912B87551E4e44Ab17";
 const defaultNeoN3MainnetTokenMap = Object.freeze({
   FLM: "0xf0151f528127558851b39c2cd8aa47da7418ab28",
   FUSD: "0x1005d400bcc2a56b7352f09e273be3f9933a5fb1",
@@ -145,68 +136,6 @@ const optionalNonEmptyString = z
     }
 
     return value.trim() === "" ? undefined : value.trim();
-  });
-
-const addressMapSchema = z
-  .string()
-  .optional()
-  .transform((value, context): Record<string, string> => {
-    if (!value || value.trim() === "") {
-      return {};
-    }
-
-    try {
-      const parsed = JSON.parse(value) as unknown;
-
-      if (
-        typeof parsed !== "object" ||
-        parsed === null ||
-        Array.isArray(parsed)
-      ) {
-        context.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "ERC20_TOKEN_MAP_JSON must be a JSON object.",
-        });
-
-        return z.NEVER;
-      }
-
-      return Object.entries(parsed).reduce<Record<string, string>>(
-        (accumulator, [symbol, address]) => {
-          if (typeof address !== "string") {
-            context.addIssue({
-              code: z.ZodIssueCode.custom,
-              message: `ERC20_TOKEN_MAP_JSON.${symbol} must be a string address.`,
-            });
-
-            return accumulator;
-          }
-
-          const parsedAddress = evmAddressSchema.safeParse(address);
-
-          if (!parsedAddress.success) {
-            context.addIssue({
-              code: z.ZodIssueCode.custom,
-              message: `ERC20_TOKEN_MAP_JSON.${symbol} must be a valid EVM address.`,
-            });
-
-            return accumulator;
-          }
-
-          accumulator[symbol.trim().toUpperCase()] = parsedAddress.data;
-
-          return accumulator;
-        },
-        {},
-      );
-    } catch {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "ERC20_TOKEN_MAP_JSON must contain valid JSON.",
-      });
-
-      return z.NEVER;
-    }
   });
 
 const hash160MapSchema = z
@@ -331,10 +260,9 @@ const envSchema = z.object({
   NODE_ENV: z
     .enum(["development", "test", "production"])
     .default("development"),
-  NEOX_RPC_URL: optionalNonEmptyString,
   NEO_RPC_URL: optionalNonEmptyString,
   NEO_N3_RPC_URL: optionalNonEmptyString,
-  NEOX_CHAIN_ID: z.coerce.number().int().positive().default(defaultNeoXChainId),
+  NEO_N3_NETWORK: z.enum(["mainnet", "testnet"]).default("mainnet"),
   LLM_PROVIDER: z.enum(["openai", "gemini"]).optional(),
   OPENAI_API_KEY: optionalNonEmptyString,
   OPENAI_MODEL: z.string().default("gpt-4.1-mini"),
@@ -342,10 +270,7 @@ const envSchema = z.object({
   GEMINI_MODEL: z.string().default("gemini-2.5-flash"),
   WALLET_WIF: optionalNonEmptyString,
   WALLET_PRIVATE_KEY: optionalNonEmptyString,
-  NEO_X_WALLET_PRIVATE_KEY: optionalNonEmptyString,
   N3_WALLET_PRIVATE_KEY: optionalNonEmptyString,
-  NEOX_BRIDGE_CONTRACT: optionalNonEmptyString,
-  NEO_N3_BRIDGE_CONTRACT: optionalNonEmptyString,
   NEO_N3_GAS_TOKEN_CONTRACT: optionalNonEmptyString,
   NEO_N3_NNS_CONTRACT: optionalNonEmptyString,
   NEO_N3_FLAMINGO_BROKER_CONTRACT: optionalNonEmptyString,
@@ -353,8 +278,6 @@ const envSchema = z.object({
   NEO_N3_FLAMINGO_ROUTER_CONTRACT: optionalNonEmptyString,
   NEO_N3_TOKEN_MAP_JSON: hash160MapSchema,
   NEO_N3_FLAMINGO_PAIRS_JSON: stringTuplePairListSchema,
-  NEOX_WRAPPED_GAS_ADDRESS: optionalNonEmptyString,
-  ERC20_TOKEN_MAP_JSON: addressMapSchema,
 });
 
 export interface AppConfig {
@@ -364,12 +287,12 @@ export interface AppConfig {
     bearerToken?: string;
   };
   nodeEnv: "development" | "test" | "production";
-  neoXRpcUrl: string;
-  neoXChainId: number;
   neoN3: {
-    rpcUrl?: string;
+    network: "mainnet" | "testnet";
+    rpcUrl: string;
     walletPrivateKey?: string;
     walletEnabled: boolean;
+    gasTokenContract: string;
     nnsContract?: string;
     flamingoBrokerContract?: string;
     flamingoConvertContract?: string;
@@ -382,33 +305,8 @@ export interface AppConfig {
   openAiModel: string;
   geminiApiKey?: string;
   geminiModel: string;
-  walletPrivateKey?: string;
   walletEnabled: boolean;
   llmEnabled: boolean;
-  bridge: {
-    neoXContract?: string;
-    neoN3Contract?: string;
-    neoN3GasTokenContract: string;
-  };
-  erc20: {
-    wrappedGasAddress: string;
-    tokenMap: Record<string, string>;
-  };
-}
-
-function parseOptionalAddress(
-  value: string | undefined,
-  fieldName: string,
-): string | undefined {
-  if (!value) {
-    return undefined;
-  }
-
-  try {
-    return evmAddressSchema.parse(value);
-  } catch {
-    throw new ValidationError(`${fieldName} must be a valid EVM address.`);
-  }
 }
 
 function parseOptionalHash160(
@@ -486,34 +384,29 @@ export function loadConfig(): AppConfig {
     openAiApiKey: env.OPENAI_API_KEY,
     geminiApiKey: env.GEMINI_API_KEY,
   });
-  const usesMainnetDefaults = env.NEOX_CHAIN_ID === defaultNeoXChainId;
-  const usesTestnetDefaults = env.NEOX_CHAIN_ID === defaultNeoXTestnetChainId;
-  const parsedNeoXRpcUrl = z
-    .string()
-    .url("NEOX_RPC_URL must be a valid URL.")
-    .parse(env.NEOX_RPC_URL ?? defaultNeoXMainnetRpcUrl);
+  const network = env.NEO_N3_NETWORK;
   const neoN3RpcUrl = env.NEO_N3_RPC_URL ?? env.NEO_RPC_URL;
-  const parsedNeoN3RpcUrl = neoN3RpcUrl
-    ? z.string().url("NEO_N3_RPC_URL must be a valid URL.").parse(neoN3RpcUrl)
-    : usesMainnetDefaults
-      ? defaultNeoN3MainnetRpcUrl
-      : usesTestnetDefaults
-        ? defaultNeoN3TestnetRpcUrl
-        : undefined;
+  const parsedNeoN3RpcUrl = z
+    .string()
+    .url("NEO_N3_RPC_URL must be a valid URL.")
+    .parse(
+      neoN3RpcUrl ??
+        (network === "testnet"
+          ? defaultNeoN3TestnetRpcUrl
+          : defaultNeoN3MainnetRpcUrl),
+    );
   const neoN3WalletPrivateKey = parseOptionalNeoN3PrivateKey(
     env.WALLET_WIF ?? env.WALLET_PRIVATE_KEY ?? env.N3_WALLET_PRIVATE_KEY,
-    "WALLET_WIF or WALLET_PRIVATE_KEY",
+    "WALLET_WIF, WALLET_PRIVATE_KEY, or N3_WALLET_PRIVATE_KEY",
   );
-  const defaultNeoN3TokenMap = usesMainnetDefaults
-    ? defaultNeoN3MainnetTokenMap
-    : usesTestnetDefaults
+  const defaultNeoN3TokenMap =
+    network === "testnet"
       ? defaultNeoN3TestnetTokenMap
-      : {};
-  const defaultNeoN3FlamingoPairs = usesMainnetDefaults
-    ? defaultNeoN3MainnetFlamingoPairs
-    : usesTestnetDefaults
+      : defaultNeoN3MainnetTokenMap;
+  const defaultNeoN3FlamingoPairs =
+    network === "testnet"
       ? defaultNeoN3TestnetFlamingoPairs
-      : [];
+      : defaultNeoN3MainnetFlamingoPairs;
   const configuredNeoN3TokenMap =
     Object.keys(env.NEO_N3_TOKEN_MAP_JSON).length > 0
       ? env.NEO_N3_TOKEN_MAP_JSON
@@ -533,46 +426,41 @@ export function loadConfig(): AppConfig {
       bearerToken: env.API_BEARER_TOKEN,
     },
     nodeEnv: env.NODE_ENV,
-    neoXRpcUrl: parsedNeoXRpcUrl,
-    neoXChainId: env.NEOX_CHAIN_ID,
     neoN3: {
+      network,
       rpcUrl: parsedNeoN3RpcUrl,
       walletPrivateKey: neoN3WalletPrivateKey,
       walletEnabled: Boolean(neoN3WalletPrivateKey),
+      gasTokenContract: parseOptionalHash160(
+        env.NEO_N3_GAS_TOKEN_CONTRACT ?? defaultNeoN3GasTokenContract,
+        "NEO_N3_GAS_TOKEN_CONTRACT",
+      ) as string,
       nnsContract: parseOptionalHash160(
         env.NEO_N3_NNS_CONTRACT ??
-          (usesMainnetDefaults
-            ? defaultNeoN3MainnetNnsContract
-            : usesTestnetDefaults
-              ? defaultNeoN3TestnetNnsContract
-              : undefined),
+          (network === "testnet"
+            ? defaultNeoN3TestnetNnsContract
+            : defaultNeoN3MainnetNnsContract),
         "NEO_N3_NNS_CONTRACT",
       ),
       flamingoBrokerContract: parseOptionalHash160(
         env.NEO_N3_FLAMINGO_BROKER_CONTRACT ??
-          (usesMainnetDefaults
-            ? defaultNeoN3MainnetFlamingoBrokerContract
-            : usesTestnetDefaults
-              ? defaultNeoN3TestnetFlamingoBrokerContract
-              : undefined),
+          (network === "testnet"
+            ? defaultNeoN3TestnetFlamingoBrokerContract
+            : defaultNeoN3MainnetFlamingoBrokerContract),
         "NEO_N3_FLAMINGO_BROKER_CONTRACT",
       ),
       flamingoConvertContract: parseOptionalHash160(
         env.NEO_N3_FLAMINGO_CONVERT_CONTRACT ??
-          (usesMainnetDefaults
-            ? defaultNeoN3MainnetFlamingoConvertContract
-            : usesTestnetDefaults
-              ? defaultNeoN3TestnetFlamingoConvertContract
-              : undefined),
+          (network === "testnet"
+            ? defaultNeoN3TestnetFlamingoConvertContract
+            : defaultNeoN3MainnetFlamingoConvertContract),
         "NEO_N3_FLAMINGO_CONVERT_CONTRACT",
       ),
       flamingoRouterContract: parseOptionalHash160(
         env.NEO_N3_FLAMINGO_ROUTER_CONTRACT ??
-          (usesMainnetDefaults
-            ? defaultNeoN3MainnetFlamingoRouterContract
-            : usesTestnetDefaults
-              ? defaultNeoN3TestnetFlamingoRouterContract
-              : undefined),
+          (network === "testnet"
+            ? defaultNeoN3TestnetFlamingoRouterContract
+            : defaultNeoN3MainnetFlamingoRouterContract),
         "NEO_N3_FLAMINGO_ROUTER_CONTRACT",
       ),
       tokenMap: configuredNeoN3TokenMap,
@@ -583,36 +471,7 @@ export function loadConfig(): AppConfig {
     openAiModel: env.OPENAI_MODEL,
     geminiApiKey: env.GEMINI_API_KEY,
     geminiModel: env.GEMINI_MODEL,
-    walletPrivateKey: env.NEO_X_WALLET_PRIVATE_KEY,
-    walletEnabled: Boolean(
-      env.NEO_X_WALLET_PRIVATE_KEY || neoN3WalletPrivateKey,
-    ),
+    walletEnabled: Boolean(neoN3WalletPrivateKey),
     llmEnabled: Boolean(llmProvider),
-    bridge: {
-      neoXContract: parseOptionalAddress(
-        env.NEOX_BRIDGE_CONTRACT ??
-          (usesMainnetDefaults ? defaultNeoXBridgeContract : undefined),
-        "NEOX_BRIDGE_CONTRACT",
-      ),
-      neoN3Contract: parseOptionalHash160(
-        env.NEO_N3_BRIDGE_CONTRACT ??
-          (usesMainnetDefaults ? defaultNeoN3BridgeContract : undefined),
-        "NEO_N3_BRIDGE_CONTRACT",
-      ),
-      neoN3GasTokenContract: parseOptionalHash160(
-        env.NEO_N3_GAS_TOKEN_CONTRACT ?? defaultNeoN3GasTokenContract,
-        "NEO_N3_GAS_TOKEN_CONTRACT",
-      ) as string,
-    },
-    erc20: {
-      wrappedGasAddress: parseOptionalAddress(
-        env.NEOX_WRAPPED_GAS_ADDRESS ??
-          (usesMainnetDefaults
-            ? defaultNeoXWrappedGasMainnetAddress
-            : defaultNeoXWrappedGasTestnetAddress),
-        "NEOX_WRAPPED_GAS_ADDRESS",
-      ) as string,
-      tokenMap: env.ERC20_TOKEN_MAP_JSON,
-    },
   };
 }

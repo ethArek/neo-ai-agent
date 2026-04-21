@@ -14,12 +14,16 @@ function createConfig(overrides: Partial<AppConfig> = {}): AppConfig {
       host: "127.0.0.1",
     },
     nodeEnv: "test",
-    neoXRpcUrl: "https://example.com",
-    neoXChainId: 47763,
     neoN3: {
+      network: "mainnet",
       rpcUrl: "https://n3.example.com",
       walletPrivateKey: undefined,
       walletEnabled: false,
+      gasTokenContract: "0xd2a4cff31913016155e38e474a2c06d08be276cf",
+      nnsContract: "0x50ac1c37690cc2cfc594472833cf57505d5f46de",
+      flamingoBrokerContract: "0xec268e9c642b7d09d10fe658bcb1cc63c0895d4d",
+      flamingoConvertContract: "0xf40f694362957d56801a8cef7e62a83f7f1b7b0f",
+      flamingoRouterContract: "0xde3a4b093abbd07e9a69cdec88a54d9a1fe14975",
       tokenMap: {},
       flamingoPairs: [],
     },
@@ -28,18 +32,8 @@ function createConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     openAiModel: "gpt-4.1-mini",
     geminiApiKey: undefined,
     geminiModel: "gemini-2.5-flash",
-    walletPrivateKey: undefined,
     walletEnabled: false,
     llmEnabled: false,
-    bridge: {
-      neoXContract: "0x1212000000000000000000000000000000000004",
-      neoN3Contract: "0xbb19cfc864b73159277e1fd39694b3fd5fc613d2",
-      neoN3GasTokenContract: "0xd2a4cff31913016155e38e474a2c06d08be276cf",
-    },
-    erc20: {
-      wrappedGasAddress: "0xdE41591ED1f8ED1484aC2CD8ca0876428de60EfF",
-      tokenMap: {},
-    },
     ...overrides,
   };
 }

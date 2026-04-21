@@ -269,7 +269,7 @@ export function buildOpenApiDocument(
           tags: ["Experimental"],
           summary: "List tools",
           description:
-            "Returns the registered Neo N3 and Neo X tools available through the agent.",
+            "Returns the registered Neo N3 tools available through the agent.",
           responses: {
             "200": {
               description: "Tool registry.",
@@ -299,7 +299,7 @@ export function buildOpenApiDocument(
           tags: ["Experimental"],
           summary: "Send a natural-language request",
           description:
-            "Plans and executes a natural-language Neo request using the current in-memory session context.",
+            "Plans and executes a natural-language Neo N3 request using the current in-memory session context.",
           requestBody: {
             required: true,
             content: {

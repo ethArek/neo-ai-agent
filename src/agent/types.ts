@@ -8,31 +8,20 @@ import type {
 import type { NeoProvider } from "../neo/types";
 
 export const toolNames = [
-  "getBalance",
   "getNeoN3PortfolioOverview",
   "getNeoN3TokenBalances",
   "getNeoN3TransferHistory",
-  "getGasBridgeQuote",
-  "getBridgeStatus",
   "getNeoN3SwapQuote",
-  "getPortfolioOverview",
-  "getTokenBalances",
   "getTransaction",
   "getLastTransactionStatus",
   "getRecentActions",
   "getBlock",
-  "invokeRead",
   "invokeNeoN3Read",
-  "prepareContractWrite",
   "prepareNeoN3ContractWrite",
   "getWalletAddress",
-  "bridgeGas",
-  "sendGas",
   "sendNeoN3Gas",
   "sendNeoN3Token",
   "swapNeoN3Token",
-  "sendErc20",
-  "approveErc20",
 ] as const;
 
 export type ToolName = (typeof toolNames)[number];
@@ -72,20 +61,11 @@ export interface BroadcastActivity {
   routeSymbols?: string[];
   deadlineMinutes?: number;
   deadlineTimestamp?: number;
-  destinationAddress?: string;
-  bridgeDirection?: "neoN3ToNeoX" | "neoXToNeoN3";
-  maxFee?: string;
-  estimatedReceived?: string;
-  minimumAmount?: string;
-  maximumAmount?: string;
-  bridgeEtaLowMinutes?: number;
-  bridgeEtaHighMinutes?: number;
 }
 
 export interface ToolSessionContext {
   id: string;
   walletAddress?: string;
-  neoXWalletAddress?: string;
   neoN3WalletAddress?: string;
   lastReferencedAddress?: string;
   recentBroadcasts: BroadcastActivity[];
@@ -142,7 +122,6 @@ export interface PlannerContext {
   pendingAction?: PendingToolAction;
   draftAction?: DraftToolAction;
   walletAddress?: string;
-  neoXWalletAddress?: string;
   neoN3WalletAddress?: string;
   lastReferencedAddress?: string;
 }

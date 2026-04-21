@@ -1,7 +1,7 @@
 {
   "name": "neo-ai-agent",
   "version": "1.0.0",
-  "description": "Production-style CLI AI agent for the Neo X blockchain built with Node.js and TypeScript.",
+  "description": "Production-style CLI AI agent for the Neo N3 blockchain built with Node.js and TypeScript.",
   "bin": {
     "neo-ai-agent": "dist/index.js"
   },
@@ -30,7 +30,6 @@
     "@google/genai": "^1.46.0",
     "commander": "^14.0.1",
     "dotenv": "^16.6.1",
-    "ethers": "^6.15.0",
     "openai": "^6.32.0",
     "pino": "^10.1.0",
     "zod": "^4.1.5"

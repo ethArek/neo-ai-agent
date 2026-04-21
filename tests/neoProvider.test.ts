@@ -3,7 +3,6 @@ import {
   rpc as neoRpc,
   wallet as neoWallet,
 } from "@cityofzion/neon-js";
-import { Wallet } from "ethers";
 
 import type { AppConfig } from "../src/core/config";
 import { createNeoProvider } from "../src/neo/client";
@@ -11,7 +10,6 @@ import { createNeoProvider } from "../src/neo/client";
 const neoN3MainnetNnsContract = "0x50ac1c37690cc2cfc594472833cf57505d5f46de";
 const neoN3GasTokenContract = "0xd2a4cff31913016155e38e474a2c06d08be276cf";
 const bNeoMainnetContract = "0x48c40d4666f93408be1bef038b6722404d9a4c2a";
-const wrappedGasAddress = "0xdE41591ED1f8ED1484aC2CD8ca0876428de60EfF";
 
 function createConfig(n3WalletPrivateKey: string): AppConfig {
   return {
@@ -20,32 +18,27 @@ function createConfig(n3WalletPrivateKey: string): AppConfig {
       host: "127.0.0.1",
     },
     nodeEnv: "test",
-    neoXRpcUrl: "https://example.com",
-    neoXChainId: 47_763,
     neoN3: {
+      network: "mainnet",
       rpcUrl: "https://n3.example.com",
       walletPrivateKey: n3WalletPrivateKey,
       walletEnabled: true,
+      gasTokenContract: neoN3GasTokenContract,
       nnsContract: neoN3MainnetNnsContract,
+      flamingoBrokerContract: "0xec268e9c642b7d09d10fe658bcb1cc63c0895d4d",
+      flamingoConvertContract: "0xf40f694362957d56801a8cef7e62a83f7f1b7b0f",
+      flamingoRouterContract: "0xde3a4b093abbd07e9a69cdec88a54d9a1fe14975",
       tokenMap: {},
       flamingoPairs: [],
     },
     openAiModel: "gpt-4.1-mini",
     geminiModel: "gemini-2.5-flash",
-    walletPrivateKey: Wallet.createRandom().privateKey,
     walletEnabled: true,
     llmEnabled: false,
-    bridge: {
-      neoN3GasTokenContract,
-    },
-    erc20: {
-      wrappedGasAddress,
-      tokenMap: {},
-    },
   };
 }
 
-describe("NeoXProvider", () => {
+describe("NeoProvider", () => {
   afterEach(() => {
     jest.restoreAllMocks();
   });

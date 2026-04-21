@@ -16,7 +16,6 @@ import type {
   ToolName,
 } from "./types";
 
-const addressPattern = /(0x[a-fA-F0-9]{40})/;
 const neoNsPattern =
   /\b([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*\.neo)\b/i;
 
@@ -109,11 +108,10 @@ export class AgentRuntime {
     }
 
     const plan = await this.planner.plan(trimmedMessage, {
-      walletEnabled: this.neo.walletEnabled() || this.neo.neoN3WalletEnabled(),
+      walletEnabled: this.neo.walletEnabled(),
       pendingAction: session.pendingAction,
       draftAction: session.draftAction,
       walletAddress: session.walletAddress,
-      neoXWalletAddress: session.neoXWalletAddress,
       neoN3WalletAddress: session.neoN3WalletAddress,
       lastReferencedAddress: session.lastReferencedAddress,
     });
@@ -253,7 +251,7 @@ export class AgentRuntime {
         sessionId,
         message:
           plan.explanation ??
-          "I could not map that request to a supported Neo X or Neo N3 action. Try a balance lookup, block or transaction lookup, bridge, approval, contract call, or transfer request.",
+          "I could not map that request to a supported Neo N3 action. Try a balance lookup, block or transaction lookup, contract call, transfer, or Flamingo swap request.",
         tool: null,
         arguments: plan.arguments,
         result: null,
@@ -316,21 +314,15 @@ export class AgentRuntime {
   }
 
   private syncSessionWalletAddress(sessionId: string): void {
-    const neoXWalletAddress = this.neo.walletEnabled()
-      ? this.neo.getWalletAddress()
-      : undefined;
-    const neoN3WalletAddress = this.neo.neoN3WalletEnabled()
+    const walletAddress = this.neo.walletEnabled()
       ? this.neo.getNeoN3WalletAddress()
       : undefined;
 
-    if (!neoXWalletAddress && !neoN3WalletAddress) {
+    if (!walletAddress) {
       return;
     }
 
-    this.sessions.setWalletAddresses(sessionId, {
-      neoXWalletAddress,
-      neoN3WalletAddress,
-    });
+    this.sessions.setWalletAddress(sessionId, walletAddress);
   }
 
   private createDraftAction(plan: PlannerAction): DraftToolAction {
@@ -356,21 +348,6 @@ export class AgentRuntime {
     const missingInputs = plan.missingInputs.join(", ");
 
     if (
-      plan.tool === "bridgeGas" &&
-      plan.missingInputs.length === 1 &&
-      plan.missingInputs[0] === "amount"
-    ) {
-      const direction =
-        typeof plan.arguments.direction === "string"
-          ? plan.arguments.direction
-          : "neoN3ToNeoX";
-      const routeLabel =
-        direction === "neoXToNeoN3" ? "Neo X -> Neo N3" : "Neo N3 -> Neo X";
-
-      return `I need amount to run ${plan.tool}. Reply with something like "1 GAS" and I will continue the ${routeLabel} bridge.`;
-    }
-
-    if (
       plan.tool === "sendNeoN3Gas" &&
       plan.missingInputs.length === 1 &&
       plan.missingInputs[0] === "to"
@@ -387,18 +364,10 @@ export class AgentRuntime {
     }
 
     if (
-      plan.tool === "approveErc20" &&
-      plan.missingInputs.length === 1 &&
-      plan.missingInputs[0] === "spender"
-    ) {
-      return 'I need the spender address to run approveErc20. Reply with an EVM address like "0x1234...".';
-    }
-
-    if (
       (plan.tool === "swapNeoN3Token" || plan.tool === "getNeoN3SwapQuote") &&
       plan.missingInputs.length > 0
     ) {
-      return 'I need amount, fromToken, and toToken to run the Neo N3 Flamingo swap flow. Reply with something like "swap 1 GAS for FUSD on N3".';
+      return 'I need amount, fromToken, and toToken to run the Neo N3 Flamingo swap flow. Reply with something like "swap 1 GAS for FUSD".';
     }
 
     return `I need ${missingInputs} to run ${plan.tool}.`;
@@ -421,7 +390,6 @@ export class AgentRuntime {
     };
     const remainingInputs = new Set(draftAction.missingInputs);
     const amountMatch = message.match(/\b([0-9]+(?:\.[0-9]+)?)\b/);
-    const addressMatch = message.match(addressPattern);
     const amountWithTokenMatch = message.match(
       /\b([0-9]+(?:\.[0-9]+)?)\s+([A-Za-z][A-Za-z0-9._:-]*)\b/,
     );
@@ -443,16 +411,10 @@ export class AgentRuntime {
 
       if (
         inputName === "to" &&
-        this.acceptsNeoN3Recipient(draftAction.tool, mergedArguments) &&
+        this.acceptsNeoN3Recipient(draftAction.tool) &&
         neoN3Recipient
       ) {
         mergedArguments.to = neoN3Recipient;
-        remainingInputs.delete(inputName);
-        continue;
-      }
-
-      if ((inputName === "to" || inputName === "spender") && addressMatch) {
-        mergedArguments[inputName] = addressMatch[1];
         remainingInputs.delete(inputName);
         continue;
       }
@@ -524,10 +486,10 @@ export class AgentRuntime {
       lastReferencedAddress?: string;
     },
   ): string | undefined {
-    const explicitAddressMatch = message.match(addressPattern);
+    const explicitAddress = this.extractNeoN3AddressOrName(message);
 
-    if (explicitAddressMatch) {
-      return explicitAddressMatch[1];
+    if (explicitAddress) {
+      return explicitAddress;
     }
 
     const normalizedMessage = message.trim().toLowerCase();
@@ -577,19 +539,8 @@ export class AgentRuntime {
     return undefined;
   }
 
-  private acceptsNeoN3Recipient(
-    tool: ToolName,
-    argumentsPayload: Record<string, unknown>,
-  ): boolean {
-    if (tool === "sendNeoN3Gas" || tool === "sendNeoN3Token") {
-      return true;
-    }
-
-    if (tool !== "bridgeGas") {
-      return false;
-    }
-
-    return argumentsPayload.direction === "neoXToNeoN3";
+  private acceptsNeoN3Recipient(tool: ToolName): boolean {
+    return tool === "sendNeoN3Gas" || tool === "sendNeoN3Token";
   }
 
   private hydratePlanWithSessionContext(
@@ -659,9 +610,9 @@ export class AgentRuntime {
 
   private toolSupportsImplicitAddress(tool: ToolName): boolean {
     return (
-      tool === "getBalance" ||
-      tool === "getPortfolioOverview" ||
-      tool === "getTokenBalances" ||
+      tool === "getNeoN3PortfolioOverview" ||
+      tool === "getNeoN3TokenBalances" ||
+      tool === "getNeoN3TransferHistory" ||
       tool === "getRecentActions"
     );
   }
@@ -692,9 +643,9 @@ export class AgentRuntime {
 
   private shouldRememberAddressFromTool(tool: ToolName): boolean {
     return (
-      tool === "getBalance" ||
-      tool === "getPortfolioOverview" ||
-      tool === "getTokenBalances"
+      tool === "getNeoN3PortfolioOverview" ||
+      tool === "getNeoN3TokenBalances" ||
+      tool === "getNeoN3TransferHistory"
     );
   }
 
@@ -732,14 +683,6 @@ export class AgentRuntime {
       routeSymbols?: string[];
       deadlineMinutes?: number;
       deadlineTimestamp?: number;
-      destinationAddress?: string;
-      bridgeDirection?: "neoN3ToNeoX" | "neoXToNeoN3";
-      maxFee?: string;
-      estimatedReceived?: string;
-      minimumAmount?: string;
-      maximumAmount?: string;
-      bridgeEtaLowMinutes?: number;
-      bridgeEtaHighMinutes?: number;
     },
   ): BroadcastActivity | undefined {
     if (!this.isBroadcastResult(result)) {
@@ -777,19 +720,6 @@ export class AgentRuntime {
       routeSymbols: prepared?.routeSymbols,
       deadlineMinutes: prepared?.deadlineMinutes,
       deadlineTimestamp: prepared?.deadlineTimestamp,
-      bridgeDirection: prepared?.bridgeDirection,
-      maxFee: prepared?.maxFee,
-      estimatedReceived: prepared?.estimatedReceived,
-      minimumAmount: prepared?.minimumAmount,
-      maximumAmount: prepared?.maximumAmount,
-      bridgeEtaLowMinutes: prepared?.bridgeEtaLowMinutes,
-      bridgeEtaHighMinutes: prepared?.bridgeEtaHighMinutes,
-      destinationAddress:
-        tool === "bridgeGas"
-          ? prepared?.destinationAddress
-          : typeof argumentsPayload.to === "string"
-            ? undefined
-            : prepared?.destinationAddress,
     };
   }
 
