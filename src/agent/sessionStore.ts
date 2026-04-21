@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import type { NeoNetwork, NetworkAddressMap } from "../neo/types";
 import type {
   BroadcastActivity,
   DraftToolAction,
@@ -9,11 +10,14 @@ import type {
 
 interface AgentSession {
   id: string;
+  defaultNetwork: NeoNetwork;
+  implementedNetworks: NeoNetwork[];
   pendingAction?: PendingToolAction;
   draftAction?: DraftToolAction;
   walletAddress?: string;
-  neoN3WalletAddress?: string;
+  walletAddresses: NetworkAddressMap;
   lastReferencedAddress?: string;
+  lastReferencedAddresses: NetworkAddressMap;
   recentBroadcasts: BroadcastActivity[];
   updatedAt: number;
 }
@@ -42,6 +46,10 @@ export class SessionStore {
 
     const session: AgentSession = {
       id: sessionId ?? randomUUID(),
+      defaultNetwork: "neoN3",
+      implementedNetworks: ["neoN3"],
+      walletAddresses: {},
+      lastReferencedAddresses: {},
       recentBroadcasts: [],
       updatedAt: Date.now(),
     };
@@ -85,23 +93,53 @@ export class SessionStore {
     }
   }
 
-  public setWalletAddress(sessionId: string, address: string): void {
+  public setNetworkContext(
+    sessionId: string,
+    context: {
+      defaultNetwork: NeoNetwork;
+      implementedNetworks: NeoNetwork[];
+      walletAddresses: NetworkAddressMap;
+    },
+  ): void {
     const session = this.getOrCreate(sessionId);
 
-    session.walletAddress = address;
-    session.neoN3WalletAddress = address;
+    session.defaultNetwork = context.defaultNetwork;
+    session.implementedNetworks = [...context.implementedNetworks];
+    session.walletAddresses = {
+      ...context.walletAddresses,
+    };
+    session.walletAddress = this.selectPrimaryAddress(
+      session.defaultNetwork,
+      session.walletAddresses,
+    );
 
-    if (!session.lastReferencedAddress) {
-      session.lastReferencedAddress = address;
+    for (const network of Object.keys(
+      session.walletAddresses,
+    ) as NeoNetwork[]) {
+      const address = session.walletAddresses[network];
+
+      if (address && !session.lastReferencedAddresses[network]) {
+        session.lastReferencedAddresses[network] = address;
+      }
+    }
+
+    if (!session.lastReferencedAddress && session.walletAddress) {
+      session.lastReferencedAddress = session.walletAddress;
     }
 
     session.updatedAt = Date.now();
   }
 
-  public rememberAddress(sessionId: string, address: string): void {
+  public rememberAddress(
+    sessionId: string,
+    address: string,
+    network?: NeoNetwork,
+  ): void {
     const session = this.getOrCreate(sessionId);
+    const resolvedNetwork = network ?? session.defaultNetwork;
 
     session.lastReferencedAddress = address;
+    session.lastReferencedAddresses[resolvedNetwork] = address;
     session.updatedAt = Date.now();
   }
 
@@ -124,11 +162,25 @@ export class SessionStore {
 
     return {
       id: session.id,
+      defaultNetwork: session.defaultNetwork,
+      implementedNetworks: [...session.implementedNetworks],
       walletAddress: session.walletAddress,
-      neoN3WalletAddress: session.neoN3WalletAddress,
+      walletAddresses: {
+        ...session.walletAddresses,
+      },
       lastReferencedAddress: session.lastReferencedAddress,
+      lastReferencedAddresses: {
+        ...session.lastReferencedAddresses,
+      },
       recentBroadcasts: [...session.recentBroadcasts],
     };
+  }
+
+  private selectPrimaryAddress(
+    defaultNetwork: NeoNetwork,
+    walletAddresses: NetworkAddressMap,
+  ): string | undefined {
+    return walletAddresses[defaultNetwork] ?? Object.values(walletAddresses)[0];
   }
 
   private cleanupExpiredSessions(): void {

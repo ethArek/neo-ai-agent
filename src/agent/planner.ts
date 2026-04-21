@@ -4,6 +4,7 @@ import { LlmPlanningError } from "../core/errors";
 import { logger } from "../core/logger";
 import { hash256Schema, isNeoN3Address } from "../core/validation";
 import type { LlmProvider } from "../llm/provider";
+import type { NeoNetwork } from "../neo/types";
 import type {
   PlannerAction,
   PlannerContext,
@@ -100,6 +101,8 @@ export class PlannerService {
   ): PlannerAction {
     const trimmedMessage = message.trim();
     const lowerMessage = trimmedMessage.toLowerCase();
+    const requestedNetwork = this.detectRequestedNetwork(lowerMessage);
+    const neoN3WalletAddress = this.getWalletAddress(context, "neoN3");
     const resolvedAddress = this.resolveAddressReference(
       trimmedMessage,
       context,
@@ -139,6 +142,13 @@ export class PlannerService {
         missingInputs: [],
         explanation: "The user wants to cancel the pending action.",
       };
+    }
+
+    if (
+      requestedNetwork &&
+      !this.isImplementedNetwork(requestedNetwork, context)
+    ) {
+      return this.createUnavailableNetworkPlan(requestedNetwork);
     }
 
     if (isSwapMessage) {
@@ -206,7 +216,7 @@ export class PlannerService {
         lowerMessage,
       ) ||
       lowerMessage.includes("all balances");
-    const portfolioAddress = neoN3Recipient ?? context.neoN3WalletAddress;
+    const portfolioAddress = neoN3Recipient ?? neoN3WalletAddress;
 
     if (wantsPortfolioOverview) {
       return {
@@ -234,7 +244,7 @@ export class PlannerService {
       );
 
     if (wantsNeoN3TransferHistory) {
-      const address = neoN3Recipient ?? context.neoN3WalletAddress;
+      const address = neoN3Recipient ?? neoN3WalletAddress;
 
       return {
         intent: "get_neo_n3_transfer_history",
@@ -347,7 +357,7 @@ export class PlannerService {
       /\bbalance\b.*\bgas\b/.test(lowerMessage);
 
     if (asksGasBalance) {
-      const address = neoN3Recipient ?? context.neoN3WalletAddress;
+      const address = neoN3Recipient ?? neoN3WalletAddress;
 
       return {
         intent: "get_neo_n3_token_balance",
@@ -374,7 +384,7 @@ export class PlannerService {
       specificTokenBalanceMatch &&
       specificTokenBalanceMatch[1].toLowerCase() !== "gas"
     ) {
-      const address = neoN3Recipient ?? context.neoN3WalletAddress;
+      const address = neoN3Recipient ?? neoN3WalletAddress;
 
       return {
         intent: "get_neo_n3_token_balance",
@@ -394,7 +404,7 @@ export class PlannerService {
       lowerMessage.includes("nep-17 balances") ||
       lowerMessage.includes("all balances")
     ) {
-      const address = neoN3Recipient ?? context.neoN3WalletAddress;
+      const address = neoN3Recipient ?? neoN3WalletAddress;
 
       return {
         intent: "get_neo_n3_token_balances",
@@ -419,6 +429,7 @@ export class PlannerService {
         tool: "getTransaction",
         arguments: {
           hash: hash256Schema.parse(hashMatch[0]),
+          network: requestedNetwork,
         },
         needsConfirmation: false,
         missingInputs: [],
@@ -441,9 +452,11 @@ export class PlannerService {
         arguments: blockHashMatch
           ? {
               hash: hash256Schema.parse(blockHashMatch[1]),
+              network: requestedNetwork,
             }
           : {
               height: Number(blockHeightMatch?.[1]),
+              network: requestedNetwork,
             },
         needsConfirmation: false,
         missingInputs: [],
@@ -496,10 +509,16 @@ export class PlannerService {
       return {
         intent: "get_wallet_address",
         tool: "getWalletAddress",
-        arguments: {},
+        arguments: requestedNetwork
+          ? {
+              network: requestedNetwork,
+            }
+          : {},
         needsConfirmation: false,
         missingInputs: [],
-        explanation: "Detected a wallet address request.",
+        explanation: requestedNetwork
+          ? `Detected a ${this.formatNetworkLabel(requestedNetwork)} wallet address request.`
+          : "Detected a wallet address request.",
       };
     }
 
@@ -510,7 +529,7 @@ export class PlannerService {
       needsConfirmation: false,
       missingInputs: [],
       explanation:
-        "I could not map that request to a supported Neo N3 action. Try a balance lookup, block or transaction lookup, contract call, transfer, or Flamingo swap request.",
+        "I could not map that request to a supported Neo action. Try a balance lookup, block or transaction lookup, contract call, transfer, or Flamingo swap request on an implemented network.",
     };
   }
 
@@ -529,6 +548,52 @@ export class PlannerService {
 
   private isSupportedTool(tool: string): tool is ToolName {
     return this.tools.some((entry) => entry.name === tool);
+  }
+
+  private createUnavailableNetworkPlan(network: NeoNetwork): PlannerAction {
+    return {
+      intent: "unsupported_network",
+      tool: null,
+      arguments: {
+        network,
+      },
+      needsConfirmation: false,
+      missingInputs: [],
+      explanation: `${this.formatNetworkLabel(network)} support is planned but not implemented yet in this agent.`,
+    };
+  }
+
+  private getWalletAddress(
+    context: PlannerContext,
+    network: NeoNetwork,
+  ): string | undefined {
+    return (
+      context.walletAddresses[network] ??
+      (context.defaultNetwork === network ? context.walletAddress : undefined)
+    );
+  }
+
+  private detectRequestedNetwork(message: string): NeoNetwork | undefined {
+    if (/\bneo\s*x\b|\bevm\b/.test(message)) {
+      return "neoX";
+    }
+
+    if (/\bneo\s*n3\b|\bon\s+n3\b|\bn3\b/.test(message)) {
+      return "neoN3";
+    }
+
+    return undefined;
+  }
+
+  private isImplementedNetwork(
+    network: NeoNetwork,
+    context: PlannerContext,
+  ): boolean {
+    return context.implementedNetworks.includes(network);
+  }
+
+  private formatNetworkLabel(network: NeoNetwork): string {
+    return network === "neoX" ? "Neo X" : "Neo N3";
   }
 
   private resolveAddressReference(

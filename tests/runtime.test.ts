@@ -288,7 +288,10 @@ describe("AgentRuntime", () => {
     );
 
     expect(response.tool).toBe("getLastTransactionStatus");
-    expect(statusSpy).toHaveBeenLastCalledWith(provider.latestTxHash);
+    expect(statusSpy).toHaveBeenLastCalledWith({
+      hash: provider.latestTxHash,
+      network: "neoN3",
+    });
     expect(response.message).toContain("confirmed");
     expect(response.result).toMatchObject({
       status: {
@@ -315,7 +318,10 @@ describe("AgentRuntime", () => {
     );
 
     expect(response.tool).toBe("getRecentActions");
-    expect(statusSpy).toHaveBeenLastCalledWith(provider.latestTxHash);
+    expect(statusSpy).toHaveBeenLastCalledWith({
+      hash: provider.latestTxHash,
+      network: "neoN3",
+    });
     expect(response.result).toMatchObject({
       count: 1,
       actions: [
@@ -329,5 +335,16 @@ describe("AgentRuntime", () => {
         },
       ],
     });
+  });
+
+  it("reports Neo X as planned but not yet implemented", async () => {
+    const provider = new FakeNeoProvider();
+    const runtime = createRuntime(provider);
+
+    const response = await runtime.handleMessage("show my Neo X address");
+
+    expect(response.tool).toBeNull();
+    expect(response.requiresConfirmation).toBe(false);
+    expect(response.message).toContain("Neo X support is planned");
   });
 });

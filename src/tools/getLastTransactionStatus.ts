@@ -19,6 +19,7 @@ export const getLastTransactionStatusTool: ToolDefinition<
   LastTransactionStatusResult
 > = {
   name: "getLastTransactionStatus",
+  networks: ["neoN3"],
   description:
     "Fetch the current Neo N3 status for the most recent transaction broadcast in this session.",
   argumentsDescription: "{}",
@@ -38,7 +39,10 @@ export const getLastTransactionStatusTool: ToolDefinition<
       );
     }
 
-    const status = await context.neo.getTransactionStatus(activity.txHash);
+    const status = await context.neo.getTransactionStatus({
+      hash: activity.txHash,
+      network: activity.network,
+    });
 
     return {
       message: buildStatusMessage(status, activity),

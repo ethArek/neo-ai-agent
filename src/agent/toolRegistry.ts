@@ -50,6 +50,7 @@ export class ToolRegistry {
   public listPlannerTools(): PlannerToolDescriptor[] {
     return [...this.tools.values()].map((tool) => ({
       name: tool.name,
+      networks: tool.networks,
       description: tool.description,
       argumentsDescription: tool.argumentsDescription,
       readOnly: tool.readOnly,

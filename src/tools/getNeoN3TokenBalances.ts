@@ -15,6 +15,7 @@ type Input = z.infer<typeof inputSchema>;
 export const getNeoN3TokenBalancesTool: ToolDefinition<Input, TokenBalance[]> =
   {
     name: "getNeoN3TokenBalances",
+    networks: ["neoN3"],
     description:
       "Fetch Neo N3 NEP-17 balances for a Neo N3 address, or a single token balance when token is provided.",
     argumentsDescription:
@@ -24,7 +25,7 @@ export const getNeoN3TokenBalancesTool: ToolDefinition<Input, TokenBalance[]> =
     schema: inputSchema,
     async execute(input, context) {
       const parsed = inputSchema.parse(input);
-      const address = parsed.address ?? context.neo.getNeoN3WalletAddress();
+      const address = parsed.address ?? context.neo.getWalletAddress("neoN3");
 
       if (!address) {
         throw new ValidationError(

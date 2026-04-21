@@ -27,6 +27,7 @@ import { createBroadcastResult } from "./broadcast";
 import type {
   BlockReference,
   BroadcastResult,
+  NeoNetwork,
   NeoN3ContractWriteInput,
   NeoN3PortfolioOverview,
   NeoN3ReadInvocationResult,
@@ -36,11 +37,14 @@ import type {
   NeoN3TokenTransferInput,
   NeoN3TransferHistory,
   NeoProvider,
+  NetworkAddressMap,
   PreparedTransaction,
   TokenBalance,
   TokenMetadata,
   TransactionDetails,
+  TransactionLookup,
   TransactionStatus,
+  TransactionStatusLookup,
 } from "./types";
 
 const knownNeoN3TokenMetadataByContractHash: Readonly<
@@ -227,6 +231,28 @@ export class NeoN3Provider implements NeoProvider {
       : undefined;
   }
 
+  public getImplementedNetworks(): NeoNetwork[] {
+    return ["neoN3"];
+  }
+
+  public getDefaultNetwork(): NeoNetwork {
+    return "neoN3";
+  }
+
+  public getWalletAddresses(): NetworkAddressMap {
+    const neoN3Address = this.getWalletAddress("neoN3");
+
+    return neoN3Address
+      ? {
+          neoN3: neoN3Address,
+        }
+      : {};
+  }
+
+  public getWalletAddress(network: NeoNetwork): string | undefined {
+    return network === "neoN3" ? this.neoN3Wallet?.address : undefined;
+  }
+
   public async getNeoN3GasBalance(address: string): Promise<TokenBalance> {
     const owner = await this.resolveNeoN3AddressOrName(address);
 
@@ -368,8 +394,11 @@ export class NeoN3Provider implements NeoProvider {
     };
   }
 
-  public async getTransaction(hash: string): Promise<TransactionDetails> {
-    const normalizedHash = hash256Schema.parse(hash);
+  public async getTransaction(
+    input: TransactionLookup,
+  ): Promise<TransactionDetails> {
+    this.requireImplementedNetwork(input.network, "transaction lookups");
+    const normalizedHash = hash256Schema.parse(input.hash);
     let transaction: unknown;
 
     try {
@@ -398,8 +427,11 @@ export class NeoN3Provider implements NeoProvider {
     };
   }
 
-  public async getTransactionStatus(hash: string): Promise<TransactionStatus> {
-    const normalizedHash = hash256Schema.parse(hash);
+  public async getTransactionStatus(
+    input: TransactionStatusLookup,
+  ): Promise<TransactionStatus> {
+    this.requireImplementedNetwork(input.network, "transaction status checks");
+    const normalizedHash = hash256Schema.parse(input.hash);
     let transaction: unknown;
 
     try {
@@ -456,6 +488,8 @@ export class NeoN3Provider implements NeoProvider {
   }
 
   public async getBlock(reference: BlockReference): Promise<unknown> {
+    this.requireImplementedNetwork(reference.network, "block lookups");
+
     try {
       const block =
         reference.height !== undefined
@@ -897,12 +931,12 @@ export class NeoN3Provider implements NeoProvider {
     );
   }
 
-  public getNeoN3WalletAddress(): string | undefined {
-    return this.neoN3Wallet?.address;
-  }
+  public walletEnabled(network?: NeoNetwork): boolean {
+    if (!network) {
+      return Boolean(this.neoN3Wallet);
+    }
 
-  public walletEnabled(): boolean {
-    return Boolean(this.neoN3Wallet);
+    return network === "neoN3" ? Boolean(this.neoN3Wallet) : false;
   }
 
   private buildNeoN3PreparedTransaction(
@@ -1477,7 +1511,7 @@ export class NeoN3Provider implements NeoProvider {
 
     for (let index = 0; index < tradingPairIds.length; index += 1) {
       const amountOutRaw = await this.getNeoN3ConvertAmountOut(
-        routeAmountsRaw[index],
+        amountInRaw,
         routeContracts.slice(0, index + 2),
         tradingPairIds.slice(0, index + 1),
       );
@@ -1783,6 +1817,21 @@ export class NeoN3Provider implements NeoProvider {
     return this.neoN3NetworkMagicPromise;
   }
 
+  private requireImplementedNetwork(
+    network: NeoNetwork | undefined,
+    capability: string,
+  ): "neoN3" {
+    const resolvedNetwork = network ?? this.getDefaultNetwork();
+
+    if (resolvedNetwork !== "neoN3") {
+      throw new ProviderCapabilityError(
+        `${this.formatNetworkLabel(resolvedNetwork)} ${capability} are not implemented yet.`,
+      );
+    }
+
+    return resolvedNetwork;
+  }
+
   private requireNeoN3NameServiceContractAddress(): string {
     const nnsContractAddress = this.config.neoN3.nnsContract;
 
@@ -2037,6 +2086,10 @@ export class NeoN3Provider implements NeoProvider {
     }
 
     return this.neoN3Wallet;
+  }
+
+  private formatNetworkLabel(network: NeoNetwork): string {
+    return network === "neoX" ? "Neo X" : "Neo N3";
   }
 }
 

@@ -28,6 +28,7 @@ export const sendNeoN3TokenTool: ToolDefinition<Input> = {
   readOnly: false,
   dangerous: true,
   schema: inputSchema,
+  networks: ["neoN3"],
   async execute(input, context, options) {
     const parsed = inputSchema.parse(input);
 

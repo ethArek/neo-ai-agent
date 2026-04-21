@@ -2,11 +2,13 @@ import { z } from "zod";
 
 import type { ToolDefinition } from "../agent/types";
 import { hash256Schema } from "../core/validation";
+import { neoNetworks, type NeoNetwork } from "../neo/types";
 
 const inputSchema = z
   .object({
     height: z.number().int().nonnegative().optional(),
     hash: hash256Schema.optional(),
+    network: z.enum(neoNetworks).optional(),
   })
   .superRefine((value, refinementContext) => {
     if (value.height === undefined && value.hash === undefined) {
@@ -28,8 +30,10 @@ type Input = z.infer<typeof inputSchema>;
 
 export const getBlockTool: ToolDefinition<Input, unknown> = {
   name: "getBlock",
+  networks: ["neoN3"],
   description: "Fetch Neo N3 block details by height or block hash.",
-  argumentsDescription: '{ "height"?: 123456, "hash"?: "block hash" }',
+  argumentsDescription:
+    '{ "height"?: 123456, "hash"?: "block hash", "network"?: "neoN3 | neoX" }',
   readOnly: true,
   dangerous: false,
   schema: inputSchema,
@@ -38,18 +42,25 @@ export const getBlockTool: ToolDefinition<Input, unknown> = {
     const reference = parsed.hash
       ? {
           hash: parsed.hash,
+          network: parsed.network,
         }
       : {
           height: parsed.height,
+          network: parsed.network,
         };
     const block = await context.neo.getBlock(reference);
+    const network = parsed.network ?? context.neo.getDefaultNetwork();
     const label = parsed.hash
       ? `hash ${parsed.hash}`
       : `height ${parsed.height}`;
 
     return {
-      message: `Loaded Neo N3 block ${label}.`,
+      message: `Loaded ${formatNetworkLabel(network)} block ${label}.`,
       data: block,
     };
   },
 };
+
+function formatNetworkLabel(network: NeoNetwork): string {
+  return network === "neoX" ? "Neo X" : "Neo N3";
+}

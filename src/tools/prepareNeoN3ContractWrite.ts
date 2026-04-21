@@ -26,6 +26,7 @@ export const prepareNeoN3ContractWriteTool: ToolDefinition<Input> = {
   readOnly: false,
   dangerous: true,
   schema: inputSchema,
+  networks: ["neoN3"],
   async execute(input, context, options) {
     const parsed = inputSchema.parse(input);
 

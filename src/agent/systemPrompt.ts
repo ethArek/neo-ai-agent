@@ -1,3 +1,4 @@
+import { neoNetworks, type NeoNetwork } from "../neo/types";
 import type { PlannerContext, PlannerToolDescriptor } from "./types";
 
 export function buildPlannerSystemPrompt(
@@ -7,22 +8,40 @@ export function buildPlannerSystemPrompt(
   const toolLines = tools
     .map((tool) => {
       const mode = tool.readOnly ? "read-only" : "write";
+      const networks = tool.networks.map(formatNetworkLabel).join(", ");
 
-      return `- ${tool.name} (${mode}${tool.dangerous ? ", dangerous" : ""}): ${tool.description}. Arguments: ${tool.argumentsDescription}`;
+      return `- ${tool.name} [${networks}] (${mode}${tool.dangerous ? ", dangerous" : ""}): ${tool.description}. Arguments: ${tool.argumentsDescription}`;
     })
     .join("\n");
-
+  const implementedNetworksLine = `Implemented networks: ${context.implementedNetworks.map(formatNetworkLabel).join(", ")}.`;
+  const plannedNetworks = neoNetworks.filter(
+    (network) => !context.implementedNetworks.includes(network),
+  );
+  const plannedNetworksLine =
+    plannedNetworks.length > 0
+      ? `Planned but not yet implemented networks: ${plannedNetworks.map(formatNetworkLabel).join(", ")}.`
+      : "All known networks are implemented.";
   const pendingLine = context.pendingAction
     ? `A pending confirmation exists for tool ${context.pendingAction.tool}.`
     : "There is no pending confirmation.";
   const walletAddressLine = context.walletAddress
-    ? `The loaded Neo N3 wallet address is ${context.walletAddress}.`
-    : "No Neo N3 wallet address is currently available.";
+    ? `The default wallet address is ${context.walletAddress} on ${formatNetworkLabel(context.defaultNetwork)}.`
+    : `No wallet address is currently available on the default network ${formatNetworkLabel(context.defaultNetwork)}.`;
+  const walletAddressLines = context.implementedNetworks
+    .map((network) => {
+      const address = context.walletAddresses[network];
+      const label = formatNetworkLabel(network);
+
+      return address
+        ? `- ${label}: ${address}`
+        : `- ${label}: no wallet address loaded`;
+    })
+    .join("\n");
   const referencedAddressLine = context.lastReferencedAddress
     ? `The last referenced address in this session is ${context.lastReferencedAddress}.`
     : "No address has been referenced yet in this session.";
 
-  return `You are a Neo N3 planner for a Neo N3 agent.
+  return `You are a planner for a Neo agent that is designed to support multiple networks over time.
 
 Return JSON only with this exact shape:
 {
@@ -40,6 +59,8 @@ Rules:
 - For dangerous write actions, set needsConfirmation to true.
 - For read-only actions, set needsConfirmation to false.
 - If required inputs are missing, still pick the best tool and list missingInputs.
+- Only select tools that support an implemented network relevant to the user request.
+- If the user explicitly asks for a planned but not yet implemented network, return tool null and explain that the network is not implemented yet.
 - Never invent wallet addresses, transaction hashes, contract hashes, function arguments, or amounts.
 - Prefer getNeoN3PortfolioOverview for portfolio, holdings, balance-overview, or all-balances requests.
 - Prefer getNeoN3TokenBalances for GAS balance, token balance, or NEP-17 balance requests.
@@ -60,11 +81,20 @@ Rules:
 - If the user says "my address", "my wallet", or "my account" and a wallet address is available, use that wallet address.
 - If the user says "this address", "that address", or "same address" and a previously referenced address is available, use that address.
 
+Default network: ${formatNetworkLabel(context.defaultNetwork)}.
+${implementedNetworksLine}
+${plannedNetworksLine}
 Wallet mode enabled: ${context.walletEnabled}.
 ${pendingLine}
 ${walletAddressLine}
+Wallet addresses by implemented network:
+${walletAddressLines}
 ${referencedAddressLine}
 
 Available tools:
 ${toolLines}`;
+}
+
+function formatNetworkLabel(network: NeoNetwork): string {
+  return network === "neoX" ? "Neo X" : "Neo N3";
 }

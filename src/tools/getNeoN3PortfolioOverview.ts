@@ -16,6 +16,7 @@ export const getNeoN3PortfolioOverviewTool: ToolDefinition<
   NeoN3PortfolioOverview
 > = {
   name: "getNeoN3PortfolioOverview",
+  networks: ["neoN3"],
   description:
     "Fetch a full Neo N3 portfolio overview including GAS, NEO, and tracked NEP-17 balances.",
   argumentsDescription: '{ "address"?: "Neo N3 address or NeoNS name" }',
@@ -24,7 +25,7 @@ export const getNeoN3PortfolioOverviewTool: ToolDefinition<
   schema: inputSchema,
   async execute(input, context) {
     const parsed = inputSchema.parse(input);
-    const address = parsed.address ?? context.neo.getNeoN3WalletAddress();
+    const address = parsed.address ?? context.neo.getWalletAddress("neoN3");
 
     if (!address) {
       throw new ValidationError(

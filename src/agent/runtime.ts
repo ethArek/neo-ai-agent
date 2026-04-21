@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { ValidationError } from "../core/errors";
 import { isNeoN3Address } from "../core/validation";
-import type { BroadcastResult } from "../neo/types";
+import type { BroadcastResult, NeoNetwork } from "../neo/types";
 import type { NeoProvider } from "../neo/types";
 import type { PlannerService } from "./planner";
 import type { SessionStore } from "./sessionStore";
@@ -44,7 +44,7 @@ export class AgentRuntime {
     sessionId?: string,
   ): Promise<AgentResponse> {
     const session = this.sessions.getOrCreate(sessionId);
-    this.syncSessionWalletAddress(session.id);
+    this.syncSessionNetworkContext(session.id);
     const trimmedMessage = message.trim();
     const normalizedMessage = trimmedMessage.toLowerCase();
 
@@ -108,12 +108,15 @@ export class AgentRuntime {
     }
 
     const plan = await this.planner.plan(trimmedMessage, {
+      defaultNetwork: session.defaultNetwork,
+      implementedNetworks: session.implementedNetworks,
       walletEnabled: this.neo.walletEnabled(),
       pendingAction: session.pendingAction,
       draftAction: session.draftAction,
       walletAddress: session.walletAddress,
-      neoN3WalletAddress: session.neoN3WalletAddress,
+      walletAddresses: session.walletAddresses,
       lastReferencedAddress: session.lastReferencedAddress,
+      lastReferencedAddresses: session.lastReferencedAddresses,
     });
     const hydratedPlan = this.hydratePlanWithSessionContext(
       plan,
@@ -188,7 +191,7 @@ export class AgentRuntime {
   ): Promise<AgentResponse> {
     const session = this.sessions.getOrCreate(request.sessionId);
 
-    this.syncSessionWalletAddress(session.id);
+    this.syncSessionNetworkContext(session.id);
     const tool = this.registry.get(request.tool);
     const parsedInput = tool.schema.parse(request.arguments);
     const pendingActionBeforeExecution = session.pendingAction;
@@ -251,7 +254,7 @@ export class AgentRuntime {
         sessionId,
         message:
           plan.explanation ??
-          "I could not map that request to a supported Neo N3 action. Try a balance lookup, block or transaction lookup, contract call, transfer, or Flamingo swap request.",
+          "I could not map that request to a supported Neo action. Neo N3 is implemented now, and Neo X is reserved for future support.",
         tool: null,
         arguments: plan.arguments,
         result: null,
@@ -313,16 +316,12 @@ export class AgentRuntime {
     return /^(cancel|stop|abort|never mind)$/i.test(message.trim());
   }
 
-  private syncSessionWalletAddress(sessionId: string): void {
-    const walletAddress = this.neo.walletEnabled()
-      ? this.neo.getNeoN3WalletAddress()
-      : undefined;
-
-    if (!walletAddress) {
-      return;
-    }
-
-    this.sessions.setWalletAddress(sessionId, walletAddress);
+  private syncSessionNetworkContext(sessionId: string): void {
+    this.sessions.setNetworkContext(sessionId, {
+      defaultNetwork: this.neo.getDefaultNetwork(),
+      implementedNetworks: this.neo.getImplementedNetworks(),
+      walletAddresses: this.neo.getWalletAddresses(),
+    });
   }
 
   private createDraftAction(plan: PlannerAction): DraftToolAction {
@@ -623,13 +622,22 @@ export class AgentRuntime {
     argumentsPayload: Record<string, unknown>,
     result: unknown,
   ): void {
+    const addressNetwork = this.inferAddressNetwork(
+      tool,
+      argumentsPayload,
+      result,
+    );
     const addressFromArguments =
       typeof argumentsPayload.address === "string"
         ? argumentsPayload.address
         : undefined;
 
     if (addressFromArguments && this.shouldRememberAddressFromTool(tool)) {
-      this.sessions.rememberAddress(sessionId, addressFromArguments);
+      this.sessions.rememberAddress(
+        sessionId,
+        addressFromArguments,
+        addressNetwork,
+      );
 
       return;
     }
@@ -637,7 +645,11 @@ export class AgentRuntime {
     const addressFromResult = this.extractAddressFromResult(tool, result);
 
     if (addressFromResult) {
-      this.sessions.rememberAddress(sessionId, addressFromResult);
+      this.sessions.rememberAddress(
+        sessionId,
+        addressFromResult.address,
+        addressFromResult.network,
+      );
     }
   }
 
@@ -652,7 +664,7 @@ export class AgentRuntime {
   private extractAddressFromResult(
     tool: ToolName,
     result: unknown,
-  ): string | undefined {
+  ): { address: string; network: NeoNetwork } | undefined {
     if (typeof result !== "object" || result === null) {
       return undefined;
     }
@@ -660,12 +672,45 @@ export class AgentRuntime {
     if (
       tool === "getWalletAddress" &&
       "address" in result &&
-      typeof result.address === "string"
+      "network" in result &&
+      typeof result.address === "string" &&
+      typeof result.network === "string" &&
+      this.isNeoNetwork(result.network)
     ) {
-      return result.address;
+      return {
+        address: result.address,
+        network: result.network,
+      };
     }
 
     return undefined;
+  }
+
+  private inferAddressNetwork(
+    tool: ToolName,
+    argumentsPayload: Record<string, unknown>,
+    result: unknown,
+  ): NeoNetwork | undefined {
+    if (
+      typeof argumentsPayload.network === "string" &&
+      this.isNeoNetwork(argumentsPayload.network)
+    ) {
+      return argumentsPayload.network;
+    }
+
+    if (
+      typeof result === "object" &&
+      result !== null &&
+      "network" in result &&
+      typeof result.network === "string" &&
+      this.isNeoNetwork(result.network)
+    ) {
+      return result.network;
+    }
+
+    const toolNetworks = this.registry.get(tool).networks;
+
+    return toolNetworks.length === 1 ? toolNetworks[0] : undefined;
   }
 
   private createBroadcastActivity(
@@ -738,5 +783,9 @@ export class AgentRuntime {
       typeof value.summary === "string" &&
       typeof value.txHash === "string"
     );
+  }
+
+  private isNeoNetwork(value: string): value is NeoNetwork {
+    return value === "neoN3" || value === "neoX";
   }
 }

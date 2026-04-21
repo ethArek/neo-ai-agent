@@ -24,6 +24,7 @@ export const invokeNeoN3ReadTool: ToolDefinition<
   readOnly: true,
   dangerous: false,
   schema: inputSchema,
+  networks: ["neoN3"],
   async execute(input, context) {
     const parsed = inputSchema.parse(input);
     const result = await context.neo.invokeNeoN3Read(

@@ -11,6 +11,19 @@ const neoN3MainnetNnsContract = "0x50ac1c37690cc2cfc594472833cf57505d5f46de";
 const neoN3GasTokenContract = "0xd2a4cff31913016155e38e474a2c06d08be276cf";
 const bNeoMainnetContract = "0x48c40d4666f93408be1bef038b6722404d9a4c2a";
 
+type SwapQuoteTestProvider = ReturnType<typeof createNeoProvider> & {
+  getNeoN3ConvertAmountOut(
+    amountInRaw: bigint,
+    routeContracts: string[],
+    tradingPairIds: number[],
+  ): Promise<bigint>;
+  getNeoN3SwapPathQuote(
+    amountInRaw: bigint,
+    routeContracts: string[],
+    tradingPairIds: number[],
+  ): Promise<bigint[]>;
+};
+
 function createConfig(n3WalletPrivateKey: string): AppConfig {
   return {
     port: 3000,
@@ -41,6 +54,78 @@ function createConfig(n3WalletPrivateKey: string): AppConfig {
 describe("NeoProvider", () => {
   afterEach(() => {
     jest.restoreAllMocks();
+  });
+
+  it("reports Neo N3 as the only implemented network for now", () => {
+    const account = new neoWallet.Account();
+    const provider = createNeoProvider(createConfig(account.WIF));
+
+    expect(provider.getImplementedNetworks()).toEqual(["neoN3"]);
+    expect(provider.getDefaultNetwork()).toBe("neoN3");
+    expect(provider.getWalletAddresses()).toEqual({
+      neoN3: account.address,
+    });
+    expect(provider.getWalletAddress("neoN3")).toBe(account.address);
+    expect(provider.getWalletAddress("neoX")).toBeUndefined();
+    expect(provider.walletEnabled("neoN3")).toBe(true);
+    expect(provider.walletEnabled("neoX")).toBe(false);
+  });
+
+  it("quotes each cumulative Flamingo route prefix from the original input amount", async () => {
+    const account = new neoWallet.Account();
+    const provider = createNeoProvider(
+      createConfig(account.WIF),
+    ) as unknown as SwapQuoteTestProvider;
+    const convertAmountOutSpy = jest
+      .spyOn(provider, "getNeoN3ConvertAmountOut")
+      .mockImplementation(async (...args: unknown[]) => {
+        const [amountInRaw, routeContracts] = args as [bigint, string[]];
+
+        if (routeContracts.length === 2) {
+          expect(amountInRaw).toBe(100n);
+
+          return 60n;
+        }
+
+        if (routeContracts.length === 3) {
+          expect(amountInRaw).toBe(100n);
+
+          return 90n;
+        }
+
+        throw new Error("Unexpected route length.");
+      });
+
+    const routeAmountsRaw = await provider.getNeoN3SwapPathQuote(
+      100n,
+      [
+        "0x0000000000000000000000000000000000000001",
+        "0x0000000000000000000000000000000000000002",
+        "0x0000000000000000000000000000000000000003",
+      ],
+      [1, 2],
+    );
+
+    expect(routeAmountsRaw).toEqual([100n, 60n, 90n]);
+    expect(convertAmountOutSpy).toHaveBeenNthCalledWith(
+      1,
+      100n,
+      [
+        "0x0000000000000000000000000000000000000001",
+        "0x0000000000000000000000000000000000000002",
+      ],
+      [1],
+    );
+    expect(convertAmountOutSpy).toHaveBeenNthCalledWith(
+      2,
+      100n,
+      [
+        "0x0000000000000000000000000000000000000001",
+        "0x0000000000000000000000000000000000000002",
+        "0x0000000000000000000000000000000000000003",
+      ],
+      [1, 2],
+    );
   });
 
   it("resolves a NeoNS name before preparing a Neo N3 GAS transfer", async () => {

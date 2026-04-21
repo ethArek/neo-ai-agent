@@ -4,6 +4,7 @@ import { createBroadcastResult } from "../../src/neo/broadcast";
 import type {
   BlockReference,
   BroadcastResult,
+  NeoNetwork,
   NeoN3ContractWriteInput,
   NeoN3PortfolioOverview,
   NeoN3ReadInvocationResult,
@@ -13,11 +14,14 @@ import type {
   NeoN3TokenSwapInput,
   NeoN3TransferHistory,
   NeoProvider,
+  NetworkAddressMap,
   PreparedTransaction,
   TokenBalance,
   TokenMetadata,
   TransactionDetails,
+  TransactionLookup,
   TransactionStatus,
+  TransactionStatusLookup,
 } from "../../src/neo/types";
 
 const gasContract = "0xd2a4cff31913016155e38e474a2c06d08be276cf";
@@ -48,6 +52,24 @@ export class FakeNeoProvider implements NeoProvider {
   public readonly recipientAddress = new neoWallet.Account().address;
   public readonly neoNsName = "arkadiusz.neo";
   public readonly latestTxHash = `0x${"c".repeat(64)}`;
+
+  public getImplementedNetworks(): NeoNetwork[] {
+    return ["neoN3"];
+  }
+
+  public getDefaultNetwork(): NeoNetwork {
+    return "neoN3";
+  }
+
+  public getWalletAddresses(): NetworkAddressMap {
+    return {
+      neoN3: this.neoN3Address,
+    };
+  }
+
+  public getWalletAddress(network: NeoNetwork): string | undefined {
+    return network === "neoN3" ? this.neoN3Address : undefined;
+  }
 
   public async getNeoN3GasBalance(address: string): Promise<TokenBalance> {
     const owner = this.normalizeAddress(address);
@@ -188,10 +210,12 @@ export class FakeNeoProvider implements NeoProvider {
     };
   }
 
-  public async getTransaction(hash: string): Promise<TransactionDetails> {
+  public async getTransaction(
+    input: TransactionLookup,
+  ): Promise<TransactionDetails> {
     return {
       transaction: {
-        hash,
+        hash: input.hash,
         sender: this.neoN3Address,
         script: "00c0ffee",
       },
@@ -205,15 +229,17 @@ export class FakeNeoProvider implements NeoProvider {
     };
   }
 
-  public async getTransactionStatus(hash: string): Promise<TransactionStatus> {
+  public async getTransactionStatus(
+    input: TransactionStatusLookup,
+  ): Promise<TransactionStatus> {
     return {
-      hash,
-      network: "neoN3",
+      hash: input.hash,
+      network: input.network,
       status: "confirmed",
-      summary: `Neo N3 transaction ${hash} is confirmed.`,
+      summary: `Neo N3 transaction ${input.hash} is confirmed.`,
       blockNumber: 456,
       transaction: {
-        hash,
+        hash: input.hash,
         sender: this.neoN3Address,
       },
       applicationLog: {
@@ -230,7 +256,7 @@ export class FakeNeoProvider implements NeoProvider {
     return {
       hash: reference.hash ?? `0x${"b".repeat(64)}`,
       index: reference.height ?? 321,
-      network: "neoN3",
+      network: reference.network ?? "neoN3",
     };
   }
 
@@ -455,12 +481,12 @@ export class FakeNeoProvider implements NeoProvider {
     return createBroadcastResult(prepared, this.latestTxHash);
   }
 
-  public getNeoN3WalletAddress(): string | undefined {
-    return this.neoN3Address;
-  }
+  public walletEnabled(network?: NeoNetwork): boolean {
+    if (!network) {
+      return true;
+    }
 
-  public walletEnabled(): boolean {
-    return true;
+    return network === "neoN3";
   }
 
   private normalizeAddress(address: string): string {

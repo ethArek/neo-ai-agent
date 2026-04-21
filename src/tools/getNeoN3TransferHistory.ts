@@ -18,6 +18,7 @@ export const getNeoN3TransferHistoryTool: ToolDefinition<
   NeoN3TransferHistory
 > = {
   name: "getNeoN3TransferHistory",
+  networks: ["neoN3"],
   description:
     "Load recent Neo N3 NEP-17 transfer history for an address, with optional token filtering.",
   argumentsDescription:
@@ -27,7 +28,7 @@ export const getNeoN3TransferHistoryTool: ToolDefinition<
   schema: inputSchema,
   async execute(input, context) {
     const parsed = inputSchema.parse(input);
-    const address = parsed.address ?? context.neo.getNeoN3WalletAddress();
+    const address = parsed.address ?? context.neo.getWalletAddress("neoN3");
 
     if (!address) {
       throw new ValidationError(

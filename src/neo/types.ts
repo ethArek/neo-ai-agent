@@ -1,3 +1,9 @@
+export const neoNetworks = ["neoN3", "neoX"] as const;
+
+export type NeoNetwork = (typeof neoNetworks)[number];
+
+export type NetworkAddressMap = Partial<Record<NeoNetwork, string>>;
+
 export interface TokenMetadata {
   contractAddress: string;
   symbol: string;
@@ -34,7 +40,7 @@ export type TransactionStatusState =
 
 export interface TransactionStatus {
   hash: string;
-  network: "neoN3";
+  network: NeoNetwork;
   status: TransactionStatusState;
   summary: string;
   blockNumber?: number;
@@ -43,8 +49,19 @@ export interface TransactionStatus {
 }
 
 export interface BlockReference {
+  network?: NeoNetwork;
   height?: number;
   hash?: string;
+}
+
+export interface TransactionLookup {
+  hash: string;
+  network?: NeoNetwork;
+}
+
+export interface TransactionStatusLookup {
+  hash: string;
+  network: NeoNetwork;
 }
 
 export interface NeoN3SwapQuoteInput {
@@ -86,7 +103,7 @@ export interface PreparedTransaction {
     | "prepareNeoN3ContractWrite";
   summary: string;
   unsignedTransaction: string;
-  network: "neoN3";
+  network: NeoNetwork;
   sender: string;
   networkMagic?: number;
   nonce?: number;
@@ -113,7 +130,7 @@ export interface BroadcastResult {
   txHash: string;
   sender: string;
   summary: string;
-  network: "neoN3";
+  network: NeoNetwork;
 }
 
 export interface NeoN3PortfolioOverview {
@@ -155,6 +172,10 @@ export interface NeoN3TransferHistory {
 }
 
 export interface NeoProvider {
+  getImplementedNetworks(): NeoNetwork[];
+  getDefaultNetwork(): NeoNetwork;
+  getWalletAddresses(): NetworkAddressMap;
+  getWalletAddress(network: NeoNetwork): string | undefined;
   getNeoN3GasBalance(address: string): Promise<TokenBalance>;
   getNeoN3TokenBalances(
     address: string,
@@ -166,8 +187,10 @@ export interface NeoProvider {
     token?: string;
     limit?: number;
   }): Promise<NeoN3TransferHistory>;
-  getTransaction(hash: string): Promise<TransactionDetails>;
-  getTransactionStatus(hash: string): Promise<TransactionStatus>;
+  getTransaction(input: TransactionLookup): Promise<TransactionDetails>;
+  getTransactionStatus(
+    input: TransactionStatusLookup,
+  ): Promise<TransactionStatus>;
   getBlock(reference: BlockReference): Promise<unknown>;
   resolveNeoN3TokenMetadata(token: string): Promise<TokenMetadata>;
   invokeNeoN3Read(
@@ -190,6 +213,5 @@ export interface NeoProvider {
     input: NeoN3TokenSwapInput,
   ): Promise<PreparedTransaction>;
   signAndBroadcast(prepared: PreparedTransaction): Promise<BroadcastResult>;
-  getNeoN3WalletAddress(): string | undefined;
-  walletEnabled(): boolean;
+  walletEnabled(network?: NeoNetwork): boolean;
 }

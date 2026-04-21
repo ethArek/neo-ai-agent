@@ -2,6 +2,8 @@ import type { z } from "zod";
 
 import type {
   BroadcastResult,
+  NeoNetwork,
+  NetworkAddressMap,
   PreparedTransaction,
   TransactionStatusState,
 } from "../neo/types";
@@ -65,9 +67,12 @@ export interface BroadcastActivity {
 
 export interface ToolSessionContext {
   id: string;
+  defaultNetwork: NeoNetwork;
+  implementedNetworks: NeoNetwork[];
   walletAddress?: string;
-  neoN3WalletAddress?: string;
+  walletAddresses: NetworkAddressMap;
   lastReferencedAddress?: string;
+  lastReferencedAddresses: NetworkAddressMap;
   recentBroadcasts: BroadcastActivity[];
 }
 
@@ -90,6 +95,7 @@ export interface ToolExecutionResult<TResult = unknown> {
 
 export interface PlannerToolDescriptor {
   name: ToolName;
+  networks: NeoNetwork[];
   description: string;
   argumentsDescription: string;
   readOnly: boolean;
@@ -118,12 +124,15 @@ export interface PlannerAction {
 }
 
 export interface PlannerContext {
+  defaultNetwork: NeoNetwork;
+  implementedNetworks: NeoNetwork[];
   walletEnabled: boolean;
   pendingAction?: PendingToolAction;
   draftAction?: DraftToolAction;
   walletAddress?: string;
-  neoN3WalletAddress?: string;
+  walletAddresses: NetworkAddressMap;
   lastReferencedAddress?: string;
+  lastReferencedAddresses: NetworkAddressMap;
 }
 
 export interface AgentResponse {

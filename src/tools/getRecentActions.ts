@@ -24,6 +24,7 @@ interface RecentActionsResult {
 export const getRecentActionsTool: ToolDefinition<Input, RecentActionsResult> =
   {
     name: "getRecentActions",
+    networks: ["neoN3"],
     description:
       "Return recent Neo N3 transaction broadcasts from the current session, optionally filtered by address.",
     argumentsDescription:
@@ -39,7 +40,10 @@ export const getRecentActionsTool: ToolDefinition<Input, RecentActionsResult> =
       const actions = await Promise.all(
         filteredActivities.map(async (activity) => ({
           activity,
-          status: await context.neo.getTransactionStatus(activity.txHash),
+          status: await context.neo.getTransactionStatus({
+            hash: activity.txHash,
+            network: activity.network,
+          }),
         })),
       );
       const filterMessage = parsed.address ? ` for ${parsed.address}` : "";

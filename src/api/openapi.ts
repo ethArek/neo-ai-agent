@@ -48,6 +48,7 @@ function createToolDescriptorSchema(): Record<string, unknown> {
       "argumentsDescription",
       "readOnly",
       "dangerous",
+      "networks",
     ],
     properties: {
       name: {
@@ -64,6 +65,12 @@ function createToolDescriptorSchema(): Record<string, unknown> {
       },
       dangerous: {
         type: "boolean",
+      },
+      networks: {
+        type: "array",
+        items: {
+          type: "string",
+        },
       },
     },
   };
@@ -269,7 +276,7 @@ export function buildOpenApiDocument(
           tags: ["Experimental"],
           summary: "List tools",
           description:
-            "Returns the registered Neo N3 tools available through the agent.",
+            "Returns the currently implemented Neo tools available through the agent, including the networks each tool supports.",
           responses: {
             "200": {
               description: "Tool registry.",
@@ -299,7 +306,7 @@ export function buildOpenApiDocument(
           tags: ["Experimental"],
           summary: "Send a natural-language request",
           description:
-            "Plans and executes a natural-language Neo N3 request using the current in-memory session context.",
+            "Plans and executes a natural-language Neo request using the current in-memory session context and the currently implemented networks.",
           requestBody: {
             required: true,
             content: {

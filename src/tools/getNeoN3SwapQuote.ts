@@ -15,6 +15,7 @@ export const getNeoN3SwapQuoteTool: ToolDefinition<Input, NeoN3SwapQuote> = {
   readOnly: true,
   dangerous: false,
   schema: neoN3SwapInputSchema,
+  networks: ["neoN3"],
   async execute(input, context) {
     const parsed = neoN3SwapInputSchema.parse(input);
     const quote = await context.neo.getNeoN3SwapQuote(parsed);

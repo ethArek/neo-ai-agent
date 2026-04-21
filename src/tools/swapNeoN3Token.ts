@@ -19,6 +19,7 @@ export const swapNeoN3TokenTool: ToolDefinition<Input> = {
   readOnly: false,
   dangerous: true,
   schema: neoN3SwapInputSchema,
+  networks: ["neoN3"],
   async execute(input, context, options) {
     const parsed = neoN3SwapInputSchema.parse(input);
 
