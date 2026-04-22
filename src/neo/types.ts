@@ -144,11 +144,35 @@ export interface BroadcastResult {
   network: NeoNetwork;
 }
 
+export interface ObservedTokenBalance {
+  requestedToken: string;
+  balance: TokenBalance | null;
+}
+
+export interface PostTransactionBalances {
+  address: string;
+  tokens: ObservedTokenBalance[];
+}
+
+export interface BroadcastReceipt {
+  broadcast: BroadcastResult;
+  status: TransactionStatus;
+  postTransactionBalances?: PostTransactionBalances;
+}
+
 export interface NeoN3PortfolioOverview {
   address: string;
   gasBalance: TokenBalance;
   neoBalance: TokenBalance;
   tokenBalances: TokenBalance[];
+}
+
+export interface NeoN3UnclaimedGas {
+  address: string;
+  symbol: "GAS";
+  decimals: number;
+  rawUnclaimed: string;
+  unclaimed: string;
 }
 
 export interface NeoN3TokenTransferInput {
@@ -188,6 +212,7 @@ export interface NeoProvider {
   getWalletAddresses(): NetworkAddressMap;
   getWalletAddress(network: NeoNetwork): string | undefined;
   getNeoN3GasBalance(address: string): Promise<TokenBalance>;
+  getNeoN3UnclaimedGas(address: string): Promise<NeoN3UnclaimedGas>;
   getNeoN3TokenBalances(
     address: string,
     token?: string,

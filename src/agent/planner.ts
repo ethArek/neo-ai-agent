@@ -207,7 +207,7 @@ export class PlannerService {
         intent: "swap_neo_n3_token",
         tool: "swapNeoN3Token",
         arguments: swapArguments,
-        needsConfirmation: true,
+        needsConfirmation: !swapParameters.force,
         missingInputs,
         explanation: swapParameters.force
           ? "Detected a forced Neo N3 Flamingo swap request."
@@ -361,6 +361,27 @@ export class PlannerService {
         needsConfirmation: true,
         missingInputs: neoN3Recipient ? [] : ["to"],
         explanation: "Detected a Neo N3 token transfer request.",
+      };
+    }
+
+    const asksUnclaimedGas =
+      lowerMessage.includes("unclaimed gas") ||
+      lowerMessage.includes("claimable gas") ||
+      /\b(?:unclaimed|claimable)\b.*\bgas\b/.test(lowerMessage) ||
+      /\bnieodebran(?:y|ego)\b.*\bgas\b/.test(lowerMessage);
+
+    if (asksUnclaimedGas) {
+      const address = neoN3Recipient ?? neoN3WalletAddress;
+
+      return {
+        intent: "get_neo_n3_unclaimed_gas",
+        tool: "getNeoN3UnclaimedGas",
+        arguments: {
+          address,
+        },
+        needsConfirmation: false,
+        missingInputs: address ? [] : ["address"],
+        explanation: "Detected a Neo N3 unclaimed GAS request.",
       };
     }
 

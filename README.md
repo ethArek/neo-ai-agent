@@ -1,181 +1,530 @@
 # Neo AI Agent
 
-Neo AI Agent is a CLI-first and server-hostable assistant for Neo N3.
+Neo AI Agent is a Neo N3 assistant that lets you ask for blockchain actions in normal language instead of raw RPC calls or contract tooling.
 
-It plans natural-language requests, maps them to Neo N3 tools, and can optionally prepare write actions that require confirmation before broadcast.
+Technically, it is a CLI-first agent with an experimental REST API. User requests are mapped to Neo N3 tools by an optional OpenAI or Gemini planner, with a built-in fallback planner for common prompts when no LLM is configured.
 
-## What it does
+Examples:
 
-- fetch Neo N3 GAS, NEO, and tracked NEP-17 balances
-- load Neo N3 portfolio overviews
-- inspect Neo N3 transfer history
-- fetch block and transaction details
-- check the status of the most recent transaction in the current session
-- invoke read-only Neo N3 contract methods
-- prepare Neo N3 contract writes for confirmation
-- prepare and confirm Neo N3 GAS transfers
-- prepare and confirm Neo N3 NEP-17 transfers
-- estimate Flamingo swap routes and quotes
-- prepare and confirm Flamingo swaps on Neo N3
-- expose the same capabilities through an experimental REST API
+- `show portfolio for arkadiusz.neo`
+- `how much GAS do I have`
+- `show my last 5 transfers`
+- `send 0.1 GAS to arkadiusz.neo`
+- `swap 1 GAS for FUSD`
 
-## Architecture
+> [!IMPORTANT]
+> Only `Neo N3` is implemented right now.
+> `Neo X` is planned, but not supported yet.
+> Transfers, regular swaps, and contract writes require confirmation before broadcast.
+> A `force` swap is the exception: it skips the separate `Confirm` step, but it still runs the normal wallet, balance, routing, and slippage checks before immediate broadcast.
+> See [Force Swaps](#16-force-swaps).
 
-```mermaid
-flowchart LR
-  User["User / Client"]
+## Table Of Contents
 
-  subgraph Entry["Entry Points"]
-    CLI["CLI\nsrc/index.ts\ncli/runner.ts"]
-    API["REST API\nsrc/server.ts\napi/server.ts"]
-  end
+- [Prerequisites](#prerequisites)
+- [Two Ways To Use It](#two-ways-to-use-it)
+- [What It Can Help With](#what-it-can-help-with)
+- [What You Can Ask](#what-you-can-ask)
+- [Confirmation And Safety](#confirmation-and-safety)
+- [Session Memory](#session-memory)
+- [NeoNS Support](#neons-support)
+- [What Is Not Implemented Yet](#what-is-not-implemented-yet)
+- [Quick Start](#quick-start)
+- [Environment Variables](#environment-variables)
+- [Security Best Practices](#security-best-practices)
+- [REST API](#rest-api)
+- [Advanced Configuration](#advanced-configuration)
+- [License](#license)
 
-  Config["Config Loader\ncore/config.ts"]
-  App["createAgentApp()\napp/createAgentApp.ts"]
-  Runtime["AgentRuntime"]
-  Planner["PlannerService"]
-  Registry["ToolRegistry"]
-  Sessions["SessionStore\nin-memory session state"]
-  LLM["LLM Provider\nOpenAI / Gemini"]
-  Tools["Tool Implementations\nreads + prepared writes"]
-  Neo["NeoProvider / NeoN3Provider"]
-  Chain["Neo N3 RPC / NNS / Flamingo"]
-  Ops["Logger + Telemetry\nhealth / ready / metrics"]
+## Prerequisites
 
-  User --> CLI
-  User --> API
+Before you start, make sure you have:
 
-  CLI --> Config
-  API --> Config
-  Config --> App
+- `Node.js 20+`
+- `npm` installed
+  - the npm version bundled with Node.js 20+ is fine
+- a Neo N3 RPC URL
+  - for example a mainnet or testnet RPC endpoint
+- optionally, a wallet secret if you want to prepare transfers or swaps
+  - `WALLET_WIF`
+  - or `WALLET_PRIVATE_KEY`
+- optionally, an AI provider key for more flexible natural-language planning
+  - `OPENAI_API_KEY`
+  - or `GEMINI_API_KEY`
 
-  App --> Registry
-  App --> Planner
-  App --> Runtime
-  App --> Neo
-  App --> Sessions
+## Two Ways To Use It
 
-  Runtime --> Planner
-  Planner --> LLM
-  Runtime --> Registry
-  Runtime <--> Sessions
-  Registry --> Tools
-  Runtime --> Tools
-  Tools --> Neo
-  Neo --> Chain
+You can use this project in two modes:
 
-  API --> Runtime
-  API --> Registry
-  API --> Ops
-  Runtime --> Ops
-```
+- `Read-only mode`: no private key loaded. Best for checking balances, transfers, transactions, blocks, and contract reads. In this mode you should usually include an address or NeoNS name in the prompt.
+- `Wallet mode`: load `WALLET_WIF` or `WALLET_PRIVATE_KEY`. Prompts like `show my portfolio` work naturally, and the agent can prepare transfers, swaps, and contract writes. A `force` swap can also be broadcast immediately.
 
-Runtime keeps the confirmation boundary for dangerous actions. Planner maps natural-language requests to intents, tool implementations prepare or execute the requested operation, and the Neo provider is the only layer that talks to Neo RPC, NeoNS, and Flamingo contracts.
+> [!TIP]
+> If you are unsure where to start, start with `read-only` mode.
 
-## Install
+## What It Can Help With
+
+Neo AI Agent is mainly for everyday Neo N3 tasks:
+
+- check your wallet address
+- see your portfolio
+- check token balances
+- see unclaimed GAS
+- inspect transfers, blocks, and transactions
+- call read-only smart contract methods
+- prepare contract writes
+- send GAS
+- send NEP-17 tokens
+- get Flamingo swap quotes
+- prepare and confirm regular Flamingo swaps
+- broadcast a `force` Flamingo swap immediately
+- track the latest actions from your current session
+
+It is built as a CLI tool first, and it also has an experimental REST API for integrations.
+
+## What You Can Ask
+
+The examples below are intentionally written in plain English because that is the most predictable path, especially when no LLM key is configured.
+
+### 1. Wallet Address
+
+Use this when you want to know which wallet is currently loaded.
+
+Example prompts:
+
+- `show my address`
+- `what is my wallet address`
+- `show my Neo N3 address`
+
+### 2. Portfolio Overview
+
+Use this when you want one quick summary of your wallet: `GAS`, `NEO`, and tracked tokens.
+
+Example prompts:
+
+- `show my portfolio`
+- `show all balances`
+- `give me a portfolio overview`
+
+### 3. Token Balances
+
+Use this when you want to check one specific token or all token balances.
+
+Example prompts:
+
+- `how much GAS do I have`
+- `how much FUSD do I have`
+- `show token balances`
+- `show the balance of FLM in my wallet`
+
+### 4. Unclaimed GAS
+
+Use this when you want to know how much GAS can still be claimed for an address.
+
+Example prompts:
+
+- `how much unclaimed GAS do I have`
+- `show my claimable GAS`
+- `check unclaimed GAS for this address`
+
+### 5. Transfer History
+
+Use this when you want to see recent transfers for a wallet.
+
+Example prompts:
+
+- `show my last 5 transfers`
+- `show recent token transfers`
+- `show the last 3 FUSD transfers for this address`
+
+### 6. Recent Actions In This Session
+
+Use this when you want to review what this agent has already submitted during the current session.
+
+Example prompts:
+
+- `show my last 3 actions`
+- `show recent actions`
+- `show recent transactions from this session`
+
+### 7. Status Of The Latest Transaction
+
+Use this right after sending a transfer or swap, when you want to know whether it is pending, confirmed, or failed.
+
+Example prompts:
+
+- `what happened to my last transaction`
+- `check the status of my latest tx`
+- `status of the last transaction`
+
+### 8. Transaction Lookup
+
+Use this when you already know a transaction hash and want full details.
+
+Example prompts:
+
+- `show transaction 0xabc...`
+- `lookup tx 0xabc...`
+- `inspect transaction 0xabc...`
+
+### 9. Block Lookup
+
+Use this when you want details about a block by number or hash.
+
+Example prompts:
+
+- `show block 1234567`
+- `lookup block 1234567`
+- `show block 0xabc...`
+
+### 10. Read-Only Contract Calls
+
+Use this when you want to read data from a smart contract without sending a transaction.
+
+Example prompts:
+
+- `call balanceOf on 0x1111111111111111111111111111111111111111`
+- `invoke symbol on 0x1111111111111111111111111111111111111111`
+- `read decimals on 0x1111111111111111111111111111111111111111`
+
+### 11. Prepare A Contract Write
+
+Use this when you want the agent to build a contract transaction first and only send it after approval.
+
+Example prompts:
+
+- `prepare transfer on 0x1111111111111111111111111111111111111111`
+- `write claim on 0x1111111111111111111111111111111111111111`
+
+What happens next:
+
+- the agent prepares the transaction
+- it shows you a summary
+- nothing is broadcast yet
+- you type `Confirm` if you want to continue
+
+### 12. Send GAS
+
+Use this when you want to send native `GAS` from the loaded wallet.
+
+Example prompts:
+
+- `send 0.1 GAS to arkadiusz.neo`
+- `send 1 GAS to NQ9NEvVrutLL6JDtUMKMrkEG6QpWNxgNBM`
+
+### 13. Send Other Tokens
+
+Use this when you want to send a Neo N3 token such as `FUSD`, `FLM`, or another configured token.
+
+Example prompts:
+
+- `send 12.5 FUSD to NQ9NEvVrutLL6JDtUMKMrkEG6QpWNxgNBM`
+- `send 25 FLM to arkadiusz.neo`
+
+### 14. Flamingo Swap Quote
+
+Use this when you want to see the route and expected result before doing a swap.
+
+The quote can include:
+
+- best route
+- expected output
+- minimum received amount
+- slippage protection
+- deadline
+
+Example prompts:
+
+- `what is the best Flamingo route to swap 1 GAS for FUSD`
+- `quote 1 GAS for FUSD`
+- `how much FUSD would I get for 1 GAS`
+- `swap quote for 5 FLM to GAS`
+
+### 15. Flamingo Swap
+
+Use this when you want to prepare a swap transaction and review it before sending.
+
+Example prompts:
+
+- `swap 1 GAS for FUSD`
+- `swap 10 FLM for GAS`
+- `swap 25 FUSD to FLM with 2% slippage`
+
+For a regular swap:
+
+- the agent prepares the swap first
+- the agent does not broadcast it immediately
+- you must type `Confirm` to send it
+
+### 16. Force Swaps
+
+`Force` is for the situation where you do not want to stop at a quote or a prepared draft and you want the agent to broadcast the swap right away using the best route it can find.
+
+`Force` changes how the request is interpreted and executed. It is the one swap mode that does not wait for a separate `Confirm` step.
+
+In simple terms, `force` means:
+
+- do the swap now instead of treating the request like a quote-only question
+- use the best available route automatically
+- use default safety settings if you did not provide your own values
+
+What `force` does not mean:
+
+- it does not remove slippage protection
+- it does not bypass wallet or balance checks
+- it does not make an invalid swap succeed
+
+If you include `force` in the swap request, the agent prepares and broadcasts the swap immediately.
+
+In other words:
+
+- `force` skips the extra `Confirm` message
+- `force` does **not** skip normal swap validation
+- if wallet checks, balance checks, route resolution, or transaction preparation fail, the swap is not broadcast
+
+Example prompts:
+
+- `swap 1 GAS for FUSD with force`
+- `swap 1 GAS for FUSD with force and 1% slippage`
+- `swap 1 GAS for BNEO with force`
+- `swap 10 FLM to GAS with force`
+
+Good rule of thumb:
+
+- use a normal quote prompt if you just want to compare outcomes first
+- use `force` if you want the swap broadcast immediately
+
+## Confirmation And Safety
+
+This project is intentionally conservative with write actions.
+
+For anything that can move funds or write on-chain, the default path is:
+
+- the agent prepares the transaction first
+- the agent shows a summary
+- the transaction is not broadcast yet
+- you must explicitly type `Confirm`
+
+Exception:
+
+- a `force` Flamingo swap is prepared and broadcast immediately; see [Force Swaps](#16-force-swaps)
+
+If you change your mind, type:
+
+- `Cancel`
+- `Abort`
+- `Never mind`
+
+This applies to:
+
+- sending `GAS`
+- sending tokens
+- regular Flamingo swaps
+- contract writes
+
+## Session Memory
+
+During one session, the agent remembers useful context.
+
+That means you can do things like this:
+
+1. Ask: `show my portfolio`
+2. Then ask: `show the last 5 transfers for this address`
+3. Then ask: `how much unclaimed GAS do I have on the same address`
+
+It can also remember recent submitted transactions in the current session, so prompts like these work:
+
+- `show my last 3 actions`
+- `what happened to my last transaction`
+
+> [!NOTE]
+> Session history is stored in memory only.
+> If you restart the app, that session memory is gone.
+
+## NeoNS Support
+
+You can use a normal Neo N3 address or a NeoNS name.
+
+Examples:
+
+- `send 0.1 GAS to arkadiusz.neo`
+- `show portfolio for arkadiusz.neo`
+
+## What Is Not Implemented Yet
+
+The project already knows that `Neo X` exists, but it is not operational yet.
+
+In practice, this means:
+
+- the code can recognize requests that mention `Neo X`
+- the app can tell you that `Neo X` is planned
+- but the real tools, wallet flows, and on-chain actions are implemented only for `Neo N3`
+
+If you ask for something on `Neo X`, you should expect a message that this support is planned but not implemented yet.
+
+## Quick Start
+
+1. Install the prerequisites from the section above.
+
+2. Install project dependencies:
 
 ```bash
 npm install
 ```
 
-## Run
+3. Create a file named `.env` in the project root.
 
-CLI:
+Copy from:
 
-```bash
-npm run cli
+- `.env.example` for mainnet
+- `.env.testnet.example` for testnet
+
+> [!IMPORTANT]
+> Do not commit `.env`.
+> Keep wallet secrets private.
+> If you want testnet, start from `.env.testnet.example`.
+
+4. Choose one setup.
+
+**Read-only setup**
+
+Use this if you only want to inspect data and do not want to load a wallet.
+
+```env
+NEO_N3_NETWORK=mainnet
+NEO_N3_RPC_URL=https://n3seed1.ngd.network:10332
 ```
 
-REST API:
-
-```bash
-npm run api
-```
-
-Build:
-
-```bash
-npm run build
-```
-
-Verify:
-
-```bash
-npm run verify
-```
-
-Release verify:
-
-```bash
-npm run verify:release
-```
-
-## Environment
-
-The agent now uses Neo N3 configuration only.
-
-Required for reads:
-
-- `NEO_N3_RPC_URL` or `NEO_RPC_URL`
-
-Optional for writes:
+Leave these empty:
 
 - `WALLET_WIF`
 - `WALLET_PRIVATE_KEY`
 - `N3_WALLET_PRIVATE_KEY`
 
-Optional for Flamingo and token overrides:
+Good first prompts in read-only mode:
 
-- `NEO_N3_GAS_TOKEN_CONTRACT`
-- `NEO_N3_NNS_CONTRACT`
-- `NEO_N3_FLAMINGO_BROKER_CONTRACT`
-- `NEO_N3_FLAMINGO_CONVERT_CONTRACT`
-- `NEO_N3_FLAMINGO_ROUTER_CONTRACT`
-- `NEO_N3_TOKEN_MAP_JSON`
-- `NEO_N3_FLAMINGO_PAIRS_JSON`
+- `show portfolio for arkadiusz.neo`
+- `show token balances for NQ9NEvVrutLL6JDtUMKMrkEG6QpWNxgNBM`
+- `show my last 5 transfers for arkadiusz.neo`
 
-Optional for the REST API:
+**Wallet setup**
 
-- `API_HOST`
-- `API_BEARER_TOKEN`
-- `PORT`
+Use this if you want the agent to work with your own wallet and prepare transactions.
 
-Optional for LLM planning:
+```env
+NEO_N3_NETWORK=mainnet
+NEO_N3_RPC_URL=https://n3seed1.ngd.network:10332
+WALLET_WIF=your_wallet_wif_here
+```
 
-- `LLM_PROVIDER`
-- `OPENAI_API_KEY`
-- `OPENAI_MODEL`
-- `GEMINI_API_KEY`
-- `GEMINI_MODEL`
+You can use `WALLET_PRIVATE_KEY` instead of `WALLET_WIF` if that is what you have.
 
-See [.env.example](.env.example) and [.env.testnet.example](.env.testnet.example) for sample configurations.
+5. Optionally connect an AI provider for more flexible natural-language planning.
 
-## Example requests
+OpenAI example:
+
+```env
+LLM_PROVIDER=openai
+OPENAI_API_KEY=your_openai_api_key_here
+OPENAI_MODEL=gpt-4.1-mini
+```
+
+Gemini example:
+
+```env
+LLM_PROVIDER=gemini
+GEMINI_API_KEY=your_gemini_api_key_here
+GEMINI_MODEL=gemini-2.5-flash
+```
+
+If you do not configure an AI provider, many common prompts still work thanks to the built-in fallback planner.
+
+6. Start the CLI:
+
+```bash
+npm run cli
+```
+
+If you are in wallet mode, ask things like:
 
 - `show my portfolio`
-- `show all balances`
-- `how much GAS do I have on my address`
-- `show my last 5 transfers on Neo N3`
-- `show my last 3 actions`
+- `how much GAS do I have`
+- `show my last 5 transfers`
+
+If you are in read-only mode, ask things like:
+
+- `show portfolio for arkadiusz.neo`
+- `show token balances for NQ9NEvVrutLL6JDtUMKMrkEG6QpWNxgNBM`
 - `show transaction 0xabc...`
-- `show block 1234567`
-- `call balanceOf on 0x1111111111111111111111111111111111111111`
-- `send 0.1 GAS to arkadiusz.neo`
-- `send 12.5 FUSD to NQ9NEvVrutLL6JDtUMKMrkEG6QpWNxgNBM`
-- `what is the best Flamingo route to swap 1 GAS for FUSD`
-- `swap 1 GAS for FUSD with force and 1% slippage`
 
-## Confirmation flow
+7. Use one-shot mode if you want to run one command directly:
 
-Write tools do not broadcast immediately.
+```bash
+npm run cli -- show my portfolio
+```
 
-For transfers, swaps, and contract writes, the agent first prepares an unsigned Neo N3 transaction and replies with a summary. The broadcast only happens after an explicit confirmation such as `Confirm`.
+For read-only mode, this style is often clearer:
 
-`force` changes how the swap route and defaults are selected, but it still does not bypass confirmation.
+```bash
+npm run cli -- show portfolio for arkadiusz.neo
+```
+
+8. Use interactive mode if you want a chat-like session with memory:
+
+```bash
+npm run cli -- interactive
+```
+
+This is the best mode if you want to:
+
+- inspect a wallet
+- ask follow-up questions
+- prepare a transfer
+- then type `Confirm`
+
+## Environment Variables
+
+If you are not technical, these are the only settings you usually need to think about:
+
+- `NEO_N3_NETWORK`
+  - `mainnet` for real Neo N3
+  - `testnet` for testing
+- `NEO_N3_RPC_URL`
+  - the RPC endpoint the agent should use
+- `WALLET_WIF`
+  - easiest way to load a wallet for wallet mode
+- `WALLET_PRIVATE_KEY`
+  - alternative to `WALLET_WIF`
+- `LLM_PROVIDER`
+  - optional, `openai` or `gemini`
+- `OPENAI_API_KEY`
+  - required only if you choose OpenAI
+- `GEMINI_API_KEY`
+  - required only if you choose Gemini
+
+You can safely ignore the more advanced variables at first.
+
+## Security Best Practices
+
+- Never commit `.env`, paste wallet secrets into chat, or share screenshots that show your key material. If a secret may have leaked, move funds out and rotate the key.
+- Use a separate low-balance wallet for the agent. Do not load your main personal wallet or treasury wallet into a local assistant by default.
+- Start in `read-only` mode or on `testnet` first. Only load a mainnet wallet after you understand the flow and have checked the prompts you plan to use.
+- If you run the REST API in wallet mode, set `API_BEARER_TOKEN` and do not expose that API publicly without additional protection.
 
 ## REST API
 
-The REST API is experimental.
+There is also an experimental REST API for apps and backends.
+
+Start it with:
+
+```bash
+npm run api
+```
+
+When the server is running, the built-in API docs are available at:
+
+- `http://localhost:3000/openapi.json`
+- `http://localhost:3000/swagger.json`
 
 Useful routes:
 
@@ -190,10 +539,64 @@ Useful routes:
 - `POST /api/sessions/{sessionId}/confirm`
 - `POST /api/sessions/{sessionId}/cancel`
 
-## Notes
+If wallet mode is enabled, protect the API with `API_BEARER_TOKEN`.
 
-- session history is in-memory only
-- Neo N3 transfer history depends on the connected RPC capabilities
-- Flamingo routing uses the configured Neo N3 token map and pair graph
-- the API should be protected with `API_BEARER_TOKEN` when wallet mode is enabled
-- REST API responses include `X-Request-Id` for correlation
+Example `curl` requests:
+
+Health check:
+
+```bash
+curl http://localhost:3000/health
+```
+
+Natural-language read-only request:
+
+```bash
+curl -X POST http://localhost:3000/api/messages \
+  -H "Authorization: Bearer your_token_here" \
+  -H "Content-Type: application/json" \
+  -d "{\"message\":\"show portfolio for arkadiusz.neo\"}"
+```
+
+Natural-language force swap:
+
+```bash
+curl -X POST http://localhost:3000/api/messages \
+  -H "Authorization: Bearer your_token_here" \
+  -H "Content-Type: application/json" \
+  -d "{\"message\":\"swap 1 GAS for BNEO with force\"}"
+```
+
+Regular prepared transfer that still needs confirmation:
+
+```bash
+curl -X POST http://localhost:3000/api/messages \
+  -H "Authorization: Bearer your_token_here" \
+  -H "Content-Type: application/json" \
+  -d "{\"message\":\"send 0.1 GAS to arkadiusz.neo\"}"
+```
+
+> [!NOTE]
+> When `API_BEARER_TOKEN` is not configured on the server, you do not need the `Authorization` header for protected routes.
+> Public routes such as `/health`, `/ready`, and `/metrics` are always available.
+
+## Advanced Configuration
+
+Most users can stop at `.env.example`, but the project also supports:
+
+- mainnet and testnet Neo N3 defaults
+- custom token maps
+- custom Flamingo pair configuration
+- custom API host and port
+- custom OpenAI and Gemini model selection
+
+See:
+
+- `.env.example`
+- `.env.testnet.example`
+
+## License
+
+This project is licensed under the `MIT` License.
+
+See [LICENSE](LICENSE).

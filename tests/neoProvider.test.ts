@@ -9,6 +9,7 @@ import {
   type AppConfig,
   defaultNeoN3FlamingoContractsByNetwork,
 } from "../src/core/config";
+import { ValidationError } from "../src/core/errors";
 import { createNeoProvider, NeoN3Provider } from "../src/neo/client";
 
 const neoN3MainnetNnsContract = "0x50ac1c37690cc2cfc594472833cf57505d5f46de";
@@ -312,6 +313,55 @@ describe("NeoProvider", () => {
     expect(provider.getWalletAddress("neoX")).toBeUndefined();
     expect(provider.walletEnabled("neoN3")).toBe(true);
     expect(provider.walletEnabled("neoX")).toBe(false);
+  });
+
+  it("loads unclaimed GAS through the Neo RPC endpoint", async () => {
+    const account = new neoWallet.Account();
+    const provider = createNeoProvider(createConfig(account.WIF));
+    const getUnclaimedGasSpy = jest
+      .spyOn(neoRpc.RPCClient.prototype, "getUnclaimedGas")
+      .mockResolvedValue("123456789");
+
+    await expect(
+      provider.getNeoN3UnclaimedGas(account.address),
+    ).resolves.toEqual({
+      address: account.address,
+      symbol: "GAS",
+      decimals: 8,
+      rawUnclaimed: "123456789",
+      unclaimed: "1.23456789",
+    });
+    expect(getUnclaimedGasSpy).toHaveBeenCalledWith(account.address);
+  });
+
+  it("surfaces expired NeoNS names as a validation error", async () => {
+    const account = new neoWallet.Account();
+    const provider = createNeoProvider(createConfig(account.WIF));
+
+    jest
+      .spyOn(neoRpc.RPCClient.prototype, "invokeFunction")
+      .mockImplementation(async (_contractHash, operation) => {
+        if (operation === "resolve") {
+          return {
+            script: "00",
+            state: "FAULT",
+            gasconsumed: "0",
+            exception:
+              "An unhandled exception was thrown. The name has expired.",
+            notifications: [],
+            stack: [],
+          };
+        }
+
+        throw new Error(`Unexpected operation '${operation}'.`);
+      });
+
+    await expect(
+      provider.getNeoN3UnclaimedGas("arkadiusz.neo"),
+    ).rejects.toThrow(ValidationError);
+    await expect(
+      provider.getNeoN3UnclaimedGas("arkadiusz.neo"),
+    ).rejects.toThrow("NeoNS name 'arkadiusz.neo' has expired.");
   });
 
   it("quotes each cumulative Flamingo route prefix from the original input amount", async () => {

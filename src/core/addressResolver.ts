@@ -3,9 +3,10 @@ import { isNeoN3Address } from "./validation";
 const neoNsPattern =
   /\b([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*\.neo)\b/i;
 
-const walletAddressPattern = /\bmy (?:address|wallet|account|wallet address)\b/;
+const walletAddressPattern =
+  /\b(?:my (?:address|wallet|account|wallet address)|m[oó]j (?:adres|portfel)|moje konto|moim (?:adresie|portfelu|koncie))\b/;
 const lastKnownAddressPattern =
-  /\b(?:this|that|same) (?:address|wallet|account)\b/;
+  /\b(?:(?:this|that|same) (?:address|wallet|account)|(?:ten|tamten|ten sam) (?:adres|portfel|konto)|tym (?:adresie|portfelu|koncie))\b/;
 
 interface AddressContext {
   walletAddress?: string;

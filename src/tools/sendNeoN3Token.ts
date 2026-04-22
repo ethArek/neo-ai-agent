@@ -39,6 +39,7 @@ export const sendNeoN3TokenTool: ToolDefinition<Input> = {
       return {
         message: createBroadcastMessage(broadcast),
         data: broadcast,
+        preparedTransaction: prepared,
       };
     }
 

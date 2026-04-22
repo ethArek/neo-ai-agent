@@ -204,6 +204,47 @@ describe("REST API server", () => {
     }
   });
 
+  it("broadcasts a force Flamingo swap through HTTP without a confirmation step", async () => {
+    const setup = await createTestServer();
+    const prepareSpy = jest.spyOn(setup.provider, "prepareNeoN3TokenSwap");
+    const signSpy = jest.spyOn(setup.provider, "signAndBroadcast");
+
+    try {
+      const response = await fetch(`${setup.baseUrl}/api/messages`, {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer test-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          message: "swap 1 GAS for FUSD with force and 1% slippage",
+        }),
+      });
+      const payload = (await response.json()) as {
+        tool: string | null;
+        requiresConfirmation: boolean;
+        message: string;
+      };
+
+      expect(response.status).toBe(200);
+      expect(payload.tool).toBe("swapNeoN3Token");
+      expect(payload.requiresConfirmation).toBe(false);
+      expect(payload.message).toContain("Force swap requested");
+      expect(payload.message).toContain("Submitted a Flamingo swap");
+      expect(prepareSpy).toHaveBeenCalledWith({
+        amount: "1",
+        fromToken: "GAS",
+        toToken: "FUSD",
+        slippagePercent: "1",
+        deadlineMinutes: undefined,
+        force: true,
+      });
+      expect(signSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      await closeServer(setup.server);
+    }
+  });
+
   it("rejects direct HTTP calls to an unknown tool", async () => {
     const setup = await createTestServer();
 

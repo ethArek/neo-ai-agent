@@ -40,6 +40,7 @@ export const prepareNeoN3ContractWriteTool: ToolDefinition<Input> = {
       return {
         message: createBroadcastMessage(broadcast),
         data: broadcast,
+        preparedTransaction: prepared,
       };
     }
 

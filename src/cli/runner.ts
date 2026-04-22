@@ -5,6 +5,7 @@ import { Command, InvalidArgumentError } from "commander";
 import type { AgentRuntime } from "../agent/runtime";
 import type { ToolName } from "../agent/types";
 import { toolNames } from "../agent/types";
+import { serializeError } from "../core/errors";
 import {
   buildConfirmationGuidance,
   type ConfirmationMode,
@@ -77,6 +78,90 @@ function printResponse(
   output.write(`${theme.renderJson(response)}\n`);
 }
 
+function printCliError(
+  error: unknown,
+  json: boolean,
+  colorEnabled: boolean,
+): void {
+  const theme = createCliTheme(colorEnabled);
+  const serialized = serializeError(error);
+
+  if (json) {
+    process.stderr.write(
+      `${JSON.stringify(
+        {
+          error: serialized,
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    return;
+  }
+
+  process.stderr.write(`${theme.renderError(serialized.message)}\n`);
+}
+
+async function runWithSpinner<T>(
+  task: () => Promise<T>,
+  options: {
+    enabled: boolean;
+    colorEnabled: boolean;
+    label: string;
+  },
+): Promise<T> {
+  if (!options.enabled) {
+    return task();
+  }
+
+  const theme = createCliTheme(options.colorEnabled);
+  const frames = ["|", "/", "-", "\\"];
+  let frameIndex = 0;
+  let spinnerStarted = false;
+  let intervalHandle: ReturnType<typeof setInterval> | undefined;
+  let delayHandle: ReturnType<typeof setTimeout> | undefined;
+
+  const renderFrame = (): void => {
+    const frame = frames[frameIndex % frames.length];
+
+    frameIndex += 1;
+    output.write(`\r${theme.renderMuted(`${frame} ${options.label}`)}`);
+  };
+
+  const cleanup = (): void => {
+    if (delayHandle) {
+      clearTimeout(delayHandle);
+    }
+
+    if (intervalHandle) {
+      clearInterval(intervalHandle);
+    }
+
+    if (spinnerStarted) {
+      output.write("\r\u001b[2K\r");
+    }
+  };
+
+  delayHandle = setTimeout(() => {
+    spinnerStarted = true;
+    renderFrame();
+    intervalHandle = setInterval(renderFrame, 80);
+  }, 120);
+
+  try {
+    const result = await task();
+
+    cleanup();
+
+    return result;
+  } catch (error) {
+    cleanup();
+
+    throw error;
+  }
+}
+
 async function runInteractive(
   runtime: AgentRuntime,
   json: boolean,
@@ -95,24 +180,38 @@ async function runInteractive(
     `${theme.renderMuted("Type 'exit' to quit. Type 'Confirm' or 'Cancel' for pending actions.")}\n`,
   );
 
-  while (!done) {
-    const line = (await readline.question(theme.renderPrompt())).trim();
+  try {
+    while (!done) {
+      const line = (await readline.question(theme.renderPrompt())).trim();
 
-    if (line === "") {
-      continue;
+      if (line === "") {
+        continue;
+      }
+
+      if (/^(exit|quit)$/i.test(line)) {
+        done = true;
+        continue;
+      }
+
+      try {
+        const response = await runWithSpinner(
+          () => runtime.handleMessage(line, sessionId),
+          {
+            enabled: !json && Boolean(output.isTTY),
+            colorEnabled,
+            label: "Working on your Neo request...",
+          },
+        );
+
+        sessionId = response.sessionId;
+        printResponse(response, json, colorEnabled, "interactive");
+      } catch (error) {
+        printCliError(error, json, colorEnabled);
+      }
     }
-
-    if (/^(exit|quit)$/i.test(line)) {
-      done = true;
-      continue;
-    }
-
-    const response = await runtime.handleMessage(line, sessionId);
-    sessionId = response.sessionId;
-    printResponse(response, json, colorEnabled, "interactive");
+  } finally {
+    readline.close();
   }
-
-  readline.close();
 }
 
 function isToolName(value: string): value is ToolName {
@@ -161,7 +260,14 @@ async function handleNaturalLanguageRequest(
     return;
   }
 
-  const response = await runtime.handleMessage(messageParts.join(" "));
+  const response = await runWithSpinner(
+    () => runtime.handleMessage(messageParts.join(" ")),
+    {
+      enabled: !json && Boolean(output.isTTY),
+      colorEnabled,
+      label: "Working on your Neo request...",
+    },
+  );
   printResponse(response, json, colorEnabled, "one-shot");
 }
 
@@ -216,11 +322,19 @@ export async function runCli(
         tool: ToolName,
         options: { args: string; confirm?: boolean; json?: boolean },
       ) => {
-        const response = await runtime.executeTool({
-          tool,
-          arguments: parseJsonArguments(options.args),
-          confirm: Boolean(options.confirm),
-        });
+        const response = await runWithSpinner(
+          () =>
+            runtime.executeTool({
+              tool,
+              arguments: parseJsonArguments(options.args),
+              confirm: Boolean(options.confirm),
+            }),
+          {
+            enabled: !options.json && Boolean(output.isTTY),
+            colorEnabled: theme.colorEnabled,
+            label: "Working on your Neo request...",
+          },
+        );
 
         printResponse(
           response,

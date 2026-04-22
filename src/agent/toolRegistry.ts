@@ -5,6 +5,7 @@ import { getNeoN3PortfolioOverviewTool } from "../tools/getNeoN3PortfolioOvervie
 import { getNeoN3SwapQuoteTool } from "../tools/getNeoN3SwapQuote";
 import { getNeoN3TokenBalancesTool } from "../tools/getNeoN3TokenBalances";
 import { getNeoN3TransferHistoryTool } from "../tools/getNeoN3TransferHistory";
+import { getNeoN3UnclaimedGasTool } from "../tools/getNeoN3UnclaimedGas";
 import { getRecentActionsTool } from "../tools/getRecentActions";
 import { getTransactionTool } from "../tools/getTransaction";
 import { getWalletAddressTool } from "../tools/getWalletAddress";
@@ -18,6 +19,7 @@ import type { PlannerToolDescriptor, ToolDefinition, ToolName } from "./types";
 const allTools = [
   getNeoN3PortfolioOverviewTool,
   getNeoN3TokenBalancesTool,
+  getNeoN3UnclaimedGasTool,
   getNeoN3TransferHistoryTool,
   getNeoN3SwapQuoteTool,
   getTransactionTool,

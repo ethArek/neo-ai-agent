@@ -38,6 +38,7 @@ export const sendNeoN3GasTool: ToolDefinition<Input> = {
       return {
         message: createBroadcastMessage(broadcast),
         data: broadcast,
+        preparedTransaction: prepared,
       };
     }
 

@@ -12,6 +12,7 @@ import type {
   NeoN3TokenSwapInput,
   NeoN3TokenTransferInput,
   NeoN3TransferHistory,
+  NeoN3UnclaimedGas,
   NeoNetwork,
   NeoProvider,
   NetworkAddressMap,
@@ -84,6 +85,20 @@ export class FakeNeoProvider implements NeoProvider {
       owner,
       rawBalance: "456000000",
       balance: "4.56",
+    };
+  }
+
+  public async getNeoN3UnclaimedGas(
+    address: string,
+  ): Promise<NeoN3UnclaimedGas> {
+    const owner = this.normalizeAddress(address);
+
+    return {
+      address: owner,
+      symbol: "GAS",
+      decimals: 8,
+      rawUnclaimed: "123456789",
+      unclaimed: "1.23456789",
     };
   }
 

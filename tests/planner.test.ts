@@ -101,6 +101,44 @@ describe("PlannerService", () => {
     expect(plan.missingInputs).toHaveLength(0);
   });
 
+  it("uses the Neo N3 wallet address for unclaimed GAS questions about my address", async () => {
+    const plan = await createPlanner().plan(
+      "how much unclaimed gas do i have on my address",
+      createContext({
+        walletEnabled: true,
+        walletAddress: neoN3Address,
+        walletAddresses: {
+          neoN3: neoN3Address,
+        },
+      }),
+    );
+
+    expect(plan.tool).toBe("getNeoN3UnclaimedGas");
+    expect(plan.arguments).toMatchObject({
+      address: neoN3Address,
+    });
+    expect(plan.missingInputs).toHaveLength(0);
+  });
+
+  it("maps a Polish unclaimed GAS question to the dedicated tool", async () => {
+    const plan = await createPlanner().plan(
+      "ile unclaimed gas mam na moim adresie",
+      createContext({
+        walletEnabled: true,
+        walletAddress: neoN3Address,
+        walletAddresses: {
+          neoN3: neoN3Address,
+        },
+      }),
+    );
+
+    expect(plan.tool).toBe("getNeoN3UnclaimedGas");
+    expect(plan.arguments).toMatchObject({
+      address: neoN3Address,
+    });
+    expect(plan.missingInputs).toHaveLength(0);
+  });
+
   it("maps all balances to Neo N3 portfolio overview", async () => {
     const plan = await createPlanner().plan(
       "show all balances",
@@ -184,7 +222,7 @@ describe("PlannerService", () => {
       slippagePercent: "1",
       force: true,
     });
-    expect(plan.needsConfirmation).toBe(true);
+    expect(plan.needsConfirmation).toBe(false);
   });
 
   it("maps wallet address requests to getWalletAddress", async () => {

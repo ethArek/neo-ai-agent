@@ -8,7 +8,16 @@ import {
 import { ValidationError } from "../core/errors";
 import { logger } from "../core/logger";
 import { telemetry } from "../core/telemetry";
-import type { BroadcastResult, NeoNetwork, NeoProvider } from "../neo/types";
+import type {
+  BroadcastReceipt,
+  BroadcastResult,
+  NeoNetwork,
+  NeoProvider,
+  PostTransactionBalances,
+  PreparedTransaction,
+  TransactionStatus,
+  TransactionStatusState,
+} from "../neo/types";
 import type { PlannerService } from "./planner";
 import type { SessionStore } from "./sessionStore";
 import type { ToolRegistry } from "./toolRegistry";
@@ -26,6 +35,8 @@ interface AgentRuntimeOptions {
   registry: ToolRegistry;
   neo: NeoProvider;
   sessions: SessionStore;
+  transactionPollingIntervalMs?: number;
+  transactionPollingTimeoutMs?: number;
 }
 
 export class AgentRuntime {
@@ -33,12 +44,18 @@ export class AgentRuntime {
   private readonly registry: ToolRegistry;
   private readonly neo: NeoProvider;
   private readonly sessions: SessionStore;
+  private readonly transactionPollingIntervalMs: number;
+  private readonly transactionPollingTimeoutMs: number;
 
   public constructor(options: AgentRuntimeOptions) {
     this.planner = options.planner;
     this.registry = options.registry;
     this.neo = options.neo;
     this.sessions = options.sessions;
+    this.transactionPollingIntervalMs =
+      options.transactionPollingIntervalMs ?? 1500;
+    this.transactionPollingTimeoutMs =
+      options.transactionPollingTimeoutMs ?? 45_000;
   }
 
   public async handleMessage(
@@ -257,12 +274,19 @@ export class AgentRuntime {
         this.sessions.clearDraftAction(session.id);
       }
 
+      const preparedTransaction =
+        execution.preparedTransaction ?? pendingActionBeforeExecution?.prepared;
+      const broadcastResult = this.isBroadcastResult(execution.data)
+        ? execution.data
+        : undefined;
       const broadcastActivity = this.createBroadcastActivity(
         request.tool,
         request.arguments,
-        execution.data,
-        pendingActionBeforeExecution?.prepared,
+        broadcastResult,
+        preparedTransaction,
       );
+      let responseMessage = execution.message;
+      let responseResult = execution.data;
 
       if (broadcastActivity) {
         this.sessions.addBroadcastActivity(session.id, broadcastActivity);
@@ -278,6 +302,24 @@ export class AgentRuntime {
           tokenSymbol: broadcastActivity.tokenSymbol,
           toTokenSymbol: broadcastActivity.toTokenSymbol,
         });
+
+        const receipt = await this.observeBroadcastResult(
+          request.tool,
+          session.id,
+          broadcastActivity,
+          broadcastResult,
+          preparedTransaction,
+        );
+
+        if (receipt) {
+          broadcastActivity.status = receipt.status.status;
+          responseMessage = this.buildBroadcastCompletionMessage(
+            execution.message,
+            receipt,
+            preparedTransaction,
+          );
+          responseResult = receipt;
+        }
       }
 
       this.rememberSessionAddress(
@@ -294,10 +336,10 @@ export class AgentRuntime {
 
       return {
         sessionId: session.id,
-        message: execution.message,
+        message: responseMessage,
         tool: request.tool,
         arguments: request.arguments,
-        result: execution.data,
+        result: responseResult,
         requiresConfirmation: execution.requiresConfirmation ?? false,
       };
     } catch (error) {
@@ -607,6 +649,7 @@ export class AgentRuntime {
     return (
       tool === "getNeoN3PortfolioOverview" ||
       tool === "getNeoN3TokenBalances" ||
+      tool === "getNeoN3UnclaimedGas" ||
       tool === "getNeoN3TransferHistory" ||
       tool === "getRecentActions"
     );
@@ -653,6 +696,7 @@ export class AgentRuntime {
     return (
       tool === "getNeoN3PortfolioOverview" ||
       tool === "getNeoN3TokenBalances" ||
+      tool === "getNeoN3UnclaimedGas" ||
       tool === "getNeoN3TransferHistory"
     );
   }
@@ -712,21 +756,10 @@ export class AgentRuntime {
   private createBroadcastActivity(
     tool: ToolName,
     argumentsPayload: Record<string, unknown>,
-    result: unknown,
-    prepared?: {
-      to?: string;
-      amount?: string;
-      tokenSymbol?: string;
-      toTokenSymbol?: string;
-      amountOut?: string;
-      minimumAmountOut?: string;
-      slippagePercent?: string;
-      routeSymbols?: string[];
-      deadlineMinutes?: number;
-      deadlineTimestamp?: number;
-    },
+    result: BroadcastResult | undefined,
+    prepared?: PreparedTransaction,
   ): BroadcastActivity | undefined {
-    if (!this.isBroadcastResult(result)) {
+    if (!result) {
       return undefined;
     }
 
@@ -739,6 +772,12 @@ export class AgentRuntime {
     const fallbackTokenSymbol =
       typeof argumentsPayload.token === "string"
         ? argumentsPayload.token
+        : typeof argumentsPayload.fromToken === "string"
+          ? argumentsPayload.fromToken
+          : undefined;
+    const fallbackToTokenSymbol =
+      typeof argumentsPayload.toToken === "string"
+        ? argumentsPayload.toToken
         : undefined;
 
     return {
@@ -754,7 +793,7 @@ export class AgentRuntime {
       to: fallbackTo ?? prepared?.to,
       amount: fallbackAmount ?? prepared?.amount,
       tokenSymbol: fallbackTokenSymbol ?? prepared?.tokenSymbol,
-      toTokenSymbol: prepared?.toTokenSymbol,
+      toTokenSymbol: fallbackToTokenSymbol ?? prepared?.toTokenSymbol,
       amountOut: prepared?.amountOut,
       minimumAmountOut: prepared?.minimumAmountOut,
       slippagePercent: prepared?.slippagePercent,
@@ -783,6 +822,209 @@ export class AgentRuntime {
 
   private isNeoNetwork(value: string): value is NeoNetwork {
     return value === "neoN3" || value === "neoX";
+  }
+
+  private async observeBroadcastResult(
+    tool: ToolName,
+    sessionId: string,
+    activity: BroadcastActivity,
+    broadcast: BroadcastResult | undefined,
+    prepared?: PreparedTransaction,
+  ): Promise<BroadcastReceipt | undefined> {
+    if (!broadcast) {
+      return undefined;
+    }
+
+    try {
+      const status = await this.pollTransactionStatus(broadcast);
+      const postTransactionBalances = await this.loadPostTransactionBalances(
+        broadcast,
+        status,
+        prepared,
+      );
+
+      return {
+        broadcast,
+        status,
+        postTransactionBalances,
+      };
+    } catch (error) {
+      logger.warn(
+        "Transaction broadcast succeeded, but post-broadcast polling failed.",
+        {
+          sessionId,
+          tool,
+          txHash: activity.txHash,
+          network: activity.network,
+          error: error instanceof Error ? error.message : error,
+        },
+      );
+
+      return undefined;
+    }
+  }
+
+  private async pollTransactionStatus(
+    broadcast: BroadcastResult,
+  ): Promise<TransactionStatus> {
+    const startedAt = Date.now();
+    let latestStatus = await this.neo.getTransactionStatus({
+      hash: broadcast.txHash,
+      network: broadcast.network,
+    });
+
+    while (
+      this.shouldKeepPollingTransactionStatus(latestStatus.status) &&
+      Date.now() - startedAt < this.transactionPollingTimeoutMs
+    ) {
+      await this.sleep(this.transactionPollingIntervalMs);
+      latestStatus = await this.neo.getTransactionStatus({
+        hash: broadcast.txHash,
+        network: broadcast.network,
+      });
+    }
+
+    return latestStatus;
+  }
+
+  private shouldKeepPollingTransactionStatus(
+    status: TransactionStatusState,
+  ): boolean {
+    return (
+      status === "submitted" || status === "pending" || status === "not_found"
+    );
+  }
+
+  private async loadPostTransactionBalances(
+    broadcast: BroadcastResult,
+    status: TransactionStatus,
+    prepared?: PreparedTransaction,
+  ): Promise<PostTransactionBalances | undefined> {
+    if (status.status !== "confirmed") {
+      return undefined;
+    }
+
+    const address = prepared?.sender ?? broadcast.sender;
+    const requestedTokens = this.collectObservedTokenSymbols(prepared);
+
+    if (!address || requestedTokens.length === 0) {
+      return undefined;
+    }
+
+    const tokens = await Promise.all(
+      requestedTokens.map(async (requestedToken) => {
+        const balances = await this.neo.getNeoN3TokenBalances(
+          address,
+          requestedToken,
+        );
+
+        return {
+          requestedToken,
+          balance: balances[0] ?? null,
+        };
+      }),
+    );
+
+    return {
+      address,
+      tokens,
+    };
+  }
+
+  private collectObservedTokenSymbols(
+    prepared?: PreparedTransaction,
+  ): string[] {
+    if (!prepared) {
+      return [];
+    }
+
+    const uniqueTokens = new Set<string>();
+
+    for (const token of [prepared.tokenSymbol, prepared.toTokenSymbol]) {
+      if (typeof token === "string" && token.trim() !== "") {
+        uniqueTokens.add(token.trim());
+      }
+    }
+
+    return [...uniqueTokens];
+  }
+
+  private buildBroadcastCompletionMessage(
+    baseMessage: string,
+    receipt: BroadcastReceipt,
+    prepared?: PreparedTransaction,
+  ): string {
+    const lines = [
+      baseMessage,
+      this.buildTransactionStatusLine(receipt.status),
+    ];
+    const balancesLine = this.buildPostTransactionBalancesLine(
+      receipt.postTransactionBalances,
+      prepared,
+    );
+
+    if (balancesLine) {
+      lines.push(balancesLine);
+    }
+
+    return lines.join("\n");
+  }
+
+  private buildTransactionStatusLine(status: TransactionStatus): string {
+    switch (status.status) {
+      case "confirmed": {
+        if (status.blockNumber !== undefined) {
+          return `On-chain status: confirmed in block ${status.blockNumber}.`;
+        }
+
+        return "On-chain status: confirmed.";
+      }
+      case "failed":
+        return `On-chain status: failed. ${status.summary}`;
+      case "pending":
+        return "On-chain status: still pending after waiting for confirmation.";
+      case "submitted":
+        return "On-chain status: submitted and waiting for confirmation.";
+      case "not_found":
+        return "On-chain status: not visible on-chain yet.";
+      default:
+        return `On-chain status: ${status.status}.`;
+    }
+  }
+
+  private buildPostTransactionBalancesLine(
+    balances: PostTransactionBalances | undefined,
+    prepared?: PreparedTransaction,
+  ): string | undefined {
+    if (!balances || balances.tokens.length === 0) {
+      return undefined;
+    }
+
+    const balanceSummary = balances.tokens
+      .map((entry) => {
+        if (entry.balance) {
+          return `${entry.balance.symbol} ${entry.balance.balance}`;
+        }
+
+        return `${entry.requestedToken} unavailable`;
+      })
+      .join(", ");
+    const label =
+      prepared?.action === "swapNeoN3Token"
+        ? "Post-swap wallet balances"
+        : "Current wallet balances";
+
+    return `${label}: ${balanceSummary}.`;
+  }
+
+  private sleep(durationMs: number): Promise<void> {
+    if (durationMs <= 0) {
+      return Promise.resolve();
+    }
+
+    return new Promise((resolve) => {
+      setTimeout(resolve, durationMs);
+    });
   }
 
   public async getReadinessStatus(): Promise<{

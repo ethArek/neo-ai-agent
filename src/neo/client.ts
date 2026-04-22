@@ -38,6 +38,7 @@ import type {
   NeoN3TokenSwapInput,
   NeoN3TokenTransferInput,
   NeoN3TransferHistory,
+  NeoN3UnclaimedGas,
   NeoNetwork,
   NeoProvider,
   NetworkAddressMap,
@@ -248,6 +249,24 @@ export class NeoN3Provider implements NeoProvider {
     const owner = await this.resolveNeoN3AddressOrName(address);
 
     return this.getNeoN3TokenBalance(owner, this.getNeoN3GasToken());
+  }
+
+  public async getNeoN3UnclaimedGas(
+    address: string,
+  ): Promise<NeoN3UnclaimedGas> {
+    const owner = await this.resolveNeoN3AddressOrName(address);
+    const gasToken = this.getNeoN3GasToken();
+    const rawUnclaimed = BigInt(
+      await this.neoN3RpcClient.getUnclaimedGas(owner),
+    );
+
+    return {
+      address: owner,
+      symbol: "GAS",
+      decimals: gasToken.decimals,
+      rawUnclaimed: rawUnclaimed.toString(),
+      unclaimed: formatDecimalAmount(rawUnclaimed, gasToken.decimals),
+    };
   }
 
   public async getNeoN3TokenBalances(
@@ -540,7 +559,10 @@ export class NeoN3Provider implements NeoProvider {
 
     if (result.state !== "HALT") {
       throw new NeoRpcError(
-        `Neo N3 call '${normalizedOperation}' failed.`,
+        this.buildNeoN3CallFailureMessage(
+          normalizedOperation,
+          result.exception,
+        ),
         result.exception ?? result,
       );
     }
@@ -1004,23 +1026,31 @@ export class NeoN3Provider implements NeoProvider {
   }
 
   private async resolveNeoNsTextRecord(name: string): Promise<string> {
-    const result = await this.neoN3RpcClient.invokeFunction(
-      this.requireNeoN3NameServiceContractAddress(),
-      "resolve",
-      [
-        neoSc.ContractParam.string(name),
-        neoSc.ContractParam.integer(neoNsTextRecordType),
-      ],
-    );
-    const value = this.parseNeoN3StringResult(result, "resolve").trim();
-
-    if (value === "") {
-      throw new NotFoundError(
-        `NeoNS name '${name}' does not have a text record.`,
+    try {
+      const result = await this.neoN3RpcClient.invokeFunction(
+        this.requireNeoN3NameServiceContractAddress(),
+        "resolve",
+        [
+          neoSc.ContractParam.string(name),
+          neoSc.ContractParam.integer(neoNsTextRecordType),
+        ],
       );
-    }
+      const value = this.parseNeoN3StringResult(result, "resolve").trim();
 
-    return value;
+      if (value === "") {
+        throw new NotFoundError(
+          `NeoNS name '${name}' does not have a text record.`,
+        );
+      }
+
+      return value;
+    } catch (error) {
+      if (this.isExpiredNeoNsError(error)) {
+        throw new ValidationError(`NeoNS name '${name}' has expired.`);
+      }
+
+      throw error;
+    }
   }
 
   private parseNeoN3IntegerResult(
@@ -1035,7 +1065,7 @@ export class NeoN3Provider implements NeoProvider {
   ): bigint {
     if (result.state !== "HALT") {
       throw new NeoRpcError(
-        `Neo N3 call '${operation}' failed.`,
+        this.buildNeoN3CallFailureMessage(operation, result.exception),
         result.exception ?? result,
       );
     }
@@ -1065,7 +1095,7 @@ export class NeoN3Provider implements NeoProvider {
   ): string {
     if (result.state !== "HALT") {
       throw new NeoRpcError(
-        `Neo N3 call '${operation}' failed.`,
+        this.buildNeoN3CallFailureMessage(operation, result.exception),
         result.exception ?? result,
       );
     }
@@ -1994,7 +2024,7 @@ export class NeoN3Provider implements NeoProvider {
 
     if (result.state !== "HALT") {
       throw new NeoRpcError(
-        `Neo N3 call '${operation}' failed.`,
+        this.buildNeoN3CallFailureMessage(operation, result.exception),
         result.exception ?? result,
       );
     }
@@ -2016,7 +2046,7 @@ export class NeoN3Provider implements NeoProvider {
 
     if (result.state !== "HALT") {
       throw new NeoRpcError(
-        `Neo N3 call '${operation}' failed.`,
+        this.buildNeoN3CallFailureMessage(operation, result.exception),
         result.exception ?? result,
       );
     }
@@ -2041,6 +2071,36 @@ export class NeoN3Provider implements NeoProvider {
       .toString("hex");
 
     return hash160Schema.parse(`0x${decodedHash}`);
+  }
+
+  private buildNeoN3CallFailureMessage(
+    operation: string,
+    exception?: string | null,
+  ): string {
+    if (typeof exception !== "string" || exception.trim() === "") {
+      return `Neo N3 call '${operation}' failed.`;
+    }
+
+    const normalizedException = exception
+      .replace(/^An unhandled exception was thrown\.\s*/i, "")
+      .trim();
+
+    return `Neo N3 call '${operation}' failed: ${normalizedException}`;
+  }
+
+  private isExpiredNeoNsError(error: unknown): boolean {
+    if (!(error instanceof NeoRpcError)) {
+      return false;
+    }
+
+    if (error.message.includes("The name has expired")) {
+      return true;
+    }
+
+    return (
+      typeof error.details === "string" &&
+      error.details.includes("The name has expired")
+    );
   }
 
   private async resolveNeoN3FlamingoContractAddress(input: {

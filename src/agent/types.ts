@@ -11,6 +11,7 @@ import type {
 export const toolNames = [
   "getNeoN3PortfolioOverview",
   "getNeoN3TokenBalances",
+  "getNeoN3UnclaimedGas",
   "getNeoN3TransferHistory",
   "getNeoN3SwapQuote",
   "getTransaction",
@@ -90,6 +91,7 @@ export interface ToolExecutionResult<TResult = unknown> {
   data: TResult;
   requiresConfirmation?: boolean;
   pendingAction?: PendingToolAction;
+  preparedTransaction?: PreparedTransaction;
 }
 
 export interface PlannerToolDescriptor {

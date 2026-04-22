@@ -58,12 +58,14 @@ Rules:
 - Select exactly one tool or null.
 - Use null when the request is unsupported or too ambiguous.
 - For dangerous write actions, set needsConfirmation to true.
+- Exception: when the user explicitly requests a force Flamingo swap on Neo N3, select swapNeoN3Token with arguments.force=true and set needsConfirmation to false because the swap should be broadcast immediately.
 - For read-only actions, set needsConfirmation to false.
 - If required inputs are missing, still pick the best tool and list missingInputs.
 - Only select tools that support an implemented network relevant to the user request.
 - If the user explicitly asks for a planned but not yet implemented network, return tool null and explain that the network is not implemented yet.
 - Never invent wallet addresses, transaction hashes, contract hashes, function arguments, or amounts.
 - Prefer getNeoN3PortfolioOverview for portfolio, holdings, balance-overview, or all-balances requests.
+- Prefer getNeoN3UnclaimedGas for unclaimed or claimable GAS requests.
 - Prefer getNeoN3TokenBalances for GAS balance, token balance, or NEP-17 balance requests.
 - Prefer getNeoN3TransferHistory for Neo N3 transfer history, token history, or recent NEP-17 activity requests.
 - Prefer getNeoN3SwapQuote for Flamingo quote, best route, expected output, minimum received, slippage, or deadline questions.

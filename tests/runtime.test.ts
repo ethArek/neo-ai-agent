@@ -10,6 +10,8 @@ function createRuntime(
   options?: {
     llmProvider?: LlmProvider;
     sessions?: SessionStore;
+    transactionPollingIntervalMs?: number;
+    transactionPollingTimeoutMs?: number;
   },
 ): AgentRuntime {
   const registry = new ToolRegistry();
@@ -22,6 +24,8 @@ function createRuntime(
     registry,
     neo: provider,
     sessions: options?.sessions ?? new SessionStore(),
+    transactionPollingIntervalMs: options?.transactionPollingIntervalMs,
+    transactionPollingTimeoutMs: options?.transactionPollingTimeoutMs,
   });
 }
 
@@ -52,7 +56,30 @@ describe("AgentRuntime", () => {
     expect(signSpy).toHaveBeenCalledTimes(1);
     expect(confirmed.requiresConfirmation).toBe(false);
     expect(confirmed.message).toContain("Submitted a Neo N3 GAS transfer");
+    expect(confirmed.message).toContain(
+      "On-chain status: confirmed in block 456.",
+    );
+    expect(confirmed.message).toContain("Current wallet balances: GAS 4.56.");
     expect(confirmed.message).toContain(provider.latestTxHash);
+    expect(confirmed.result).toMatchObject({
+      status: {
+        hash: provider.latestTxHash,
+        status: "confirmed",
+        blockNumber: 456,
+      },
+      postTransactionBalances: {
+        address: provider.neoN3Address,
+        tokens: [
+          {
+            requestedToken: "GAS",
+            balance: {
+              symbol: "GAS",
+              balance: "4.56",
+            },
+          },
+        ],
+      },
+    });
   });
 
   it("completes a draft GAS transfer after collecting the recipient", async () => {
@@ -133,18 +160,48 @@ describe("AgentRuntime", () => {
     });
   });
 
-  it("still requires confirmation for a force Flamingo swap on Neo N3", async () => {
+  it("broadcasts a force Flamingo swap on Neo N3 immediately", async () => {
     const provider = new FakeNeoProvider();
     const prepareSpy = jest.spyOn(provider, "prepareNeoN3TokenSwap");
     const signSpy = jest.spyOn(provider, "signAndBroadcast");
-    const runtime = createRuntime(provider);
+    const statusSpy = jest
+      .spyOn(provider, "getTransactionStatus")
+      .mockResolvedValueOnce({
+        hash: provider.latestTxHash,
+        network: "neoN3",
+        status: "pending",
+        summary: `Neo N3 transaction ${provider.latestTxHash} is pending.`,
+      })
+      .mockResolvedValueOnce({
+        hash: provider.latestTxHash,
+        network: "neoN3",
+        status: "confirmed",
+        summary: `Neo N3 transaction ${provider.latestTxHash} is confirmed.`,
+        blockNumber: 789,
+        transaction: {
+          hash: provider.latestTxHash,
+          sender: provider.neoN3Address,
+        },
+        applicationLog: {
+          executions: [
+            {
+              vmstate: "HALT",
+            },
+          ],
+        },
+      });
+    const balancesSpy = jest.spyOn(provider, "getNeoN3TokenBalances");
+    const runtime = createRuntime(provider, {
+      transactionPollingIntervalMs: 0,
+      transactionPollingTimeoutMs: 10,
+    });
 
     const response = await runtime.handleMessage(
       "Swap 1 GAS for FUSD with force and 1% slippage",
     );
 
     expect(response.tool).toBe("swapNeoN3Token");
-    expect(response.requiresConfirmation).toBe(true);
+    expect(response.requiresConfirmation).toBe(false);
     expect(prepareSpy).toHaveBeenCalledWith({
       amount: "1",
       fromToken: "GAS",
@@ -153,9 +210,55 @@ describe("AgentRuntime", () => {
       deadlineMinutes: undefined,
       force: true,
     });
-    expect(signSpy).not.toHaveBeenCalled();
+    expect(signSpy).toHaveBeenCalledTimes(1);
     expect(response.message).toContain("Force swap requested");
-    expect(response.message).toContain('Reply with "Confirm"');
+    expect(response.message).toContain("Submitted a Flamingo swap");
+    expect(response.message).toContain(
+      "On-chain status: confirmed in block 789.",
+    );
+    expect(response.message).toContain(
+      "Post-swap wallet balances: GAS 4.56, FUSD 12.5.",
+    );
+    expect(response.message).toContain(provider.latestTxHash);
+    expect(statusSpy).toHaveBeenCalledTimes(2);
+    expect(balancesSpy).toHaveBeenNthCalledWith(
+      1,
+      provider.neoN3Address,
+      "GAS",
+    );
+    expect(balancesSpy).toHaveBeenNthCalledWith(
+      2,
+      provider.neoN3Address,
+      "FUSD",
+    );
+    expect(response.result).toMatchObject({
+      broadcast: {
+        txHash: provider.latestTxHash,
+      },
+      status: {
+        status: "confirmed",
+        blockNumber: 789,
+      },
+      postTransactionBalances: {
+        address: provider.neoN3Address,
+        tokens: [
+          {
+            requestedToken: "GAS",
+            balance: {
+              symbol: "GAS",
+              balance: "4.56",
+            },
+          },
+          {
+            requestedToken: "FUSD",
+            balance: {
+              symbol: "FUSD",
+              balance: "12.5",
+            },
+          },
+        ],
+      },
+    });
   });
 
   it("still requires confirmation for a regular Flamingo swap on Neo N3", async () => {
@@ -206,6 +309,24 @@ describe("AgentRuntime", () => {
     expect(addressResponse.result).toMatchObject({
       address: provider.neoN3Address,
       network: "neoN3",
+    });
+  });
+
+  it("loads unclaimed GAS for the session wallet from a natural-language request", async () => {
+    const provider = new FakeNeoProvider();
+    const unclaimedGasSpy = jest.spyOn(provider, "getNeoN3UnclaimedGas");
+    const runtime = createRuntime(provider);
+
+    const response = await runtime.handleMessage(
+      "how much unclaimed gas do i have on my address",
+    );
+
+    expect(response.tool).toBe("getNeoN3UnclaimedGas");
+    expect(unclaimedGasSpy).toHaveBeenCalledWith(provider.neoN3Address);
+    expect(response.message).toContain("unclaimed GAS");
+    expect(response.result).toMatchObject({
+      address: provider.neoN3Address,
+      unclaimed: "1.23456789",
     });
   });
 
