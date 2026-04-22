@@ -8,7 +8,10 @@ import {
   wallet as neoWallet,
 } from "@cityofzion/neon-js";
 
-import type { AppConfig } from "../core/config";
+import {
+  defaultNeoN3FlamingoContractsByNetwork,
+  type AppConfig,
+} from "../core/config";
 import {
   NotFoundError,
   NeoRpcError,
@@ -64,18 +67,6 @@ const knownNeoN3TokenMetadataByContractHash: Readonly<
 
 const neoN3MainnetNetworkMagic = 860_833_102;
 const neoN3TestnetNetworkMagic = 894_710_606;
-const defaultNeoN3MainnetFlamingoBrokerContract =
-  "0xec268e9c642b7d09d10fe658bcb1cc63c0895d4d";
-const defaultNeoN3TestnetFlamingoBrokerContract =
-  "0xb5e260839b427ef72faf5e563a241922da9c6cc8";
-const defaultNeoN3MainnetFlamingoConvertContract =
-  "0xf40f694362957d56801a8cef7e62a83f7f1b7b0f";
-const defaultNeoN3TestnetFlamingoConvertContract =
-  "0x160f5d64947b2d71d949c2e751d5cf13bfb2e199";
-const defaultNeoN3MainnetFlamingoRouterContract =
-  "0xde3a4b093abbd07e9a69cdec88a54d9a1fe14975";
-const defaultNeoN3TestnetFlamingoRouterContract =
-  "0x9f4dd9684638f839f3f62cc3440c3f1c8bad541b";
 
 interface PreparedTransactionInput {
   action: PreparedTransaction["action"];
@@ -1165,30 +1156,31 @@ export class NeoN3Provider implements NeoProvider {
       return task;
     }
 
-    const task = (async () => {
-      try {
-        return await this.loadNeoN3MetadataFromApi(normalizedHash);
-      } catch (apiError) {
+    return this.getOrCreateMapCachedPromise(
+      this.neoN3TokenMetadataCache,
+      normalizedHash,
+      async () => {
         try {
-          return await this.loadNeoN3MetadataFromContract(normalizedHash);
-        } catch (contractError) {
-          throw new ProviderCapabilityError(
-            `Unable to load Neo N3 token metadata for ${normalizedHash}.`,
-            {
-              apiError: apiError instanceof Error ? apiError.message : apiError,
-              contractError:
-                contractError instanceof Error
-                  ? contractError.message
-                  : contractError,
-            },
-          );
+          return await this.loadNeoN3MetadataFromApi(normalizedHash);
+        } catch (apiError) {
+          try {
+            return await this.loadNeoN3MetadataFromContract(normalizedHash);
+          } catch (contractError) {
+            throw new ProviderCapabilityError(
+              `Unable to load Neo N3 token metadata for ${normalizedHash}.`,
+              {
+                apiError:
+                  apiError instanceof Error ? apiError.message : apiError,
+                contractError:
+                  contractError instanceof Error
+                    ? contractError.message
+                    : contractError,
+              },
+            );
+          }
         }
-      }
-    })();
-
-    this.neoN3TokenMetadataCache.set(normalizedHash, task);
-
-    return task;
+      },
+    );
   }
 
   private async loadNeoN3MetadataFromApi(
@@ -1577,23 +1569,38 @@ export class NeoN3Provider implements NeoProvider {
   }
 
   private normalizeSwapSlippagePercent(requested?: string): string {
-    if (!requested) {
-      return "1";
-    }
+    const normalizedRequested = requested ?? "1";
+    const value = Number(normalizedRequested);
 
-    const value = Number(requested);
-
-    if (!Number.isFinite(value) || value <= 0 || value > 50) {
+    if (!Number.isFinite(value) || value < 0.01 || value > 50) {
       throw new ValidationError(
-        "Swap slippagePercent must be a decimal percent between 0 and 50.",
+        "Swap slippagePercent must be a decimal percent between 0.01 and 50 with up to 2 decimal places.",
       );
     }
 
-    return requested;
+    try {
+      const basisPoints = parseDecimalAmount(normalizedRequested, 2);
+
+      if (basisPoints <= 0n || basisPoints > 5_000n) {
+        throw new ValidationError(
+          "Swap slippagePercent must be a decimal percent between 0.01 and 50 with up to 2 decimal places.",
+        );
+      }
+    } catch (error) {
+      if (error instanceof ValidationError) {
+        throw new ValidationError(
+          "Swap slippagePercent must be a decimal percent between 0.01 and 50 with up to 2 decimal places.",
+        );
+      }
+
+      throw error;
+    }
+
+    return normalizedRequested;
   }
 
   private toBasisPoints(percent: string): number {
-    return Math.round(Number(percent) * 100);
+    return Number(parseDecimalAmount(percent, 2));
   }
 
   private applySlippage(amount: bigint, slippageBps: number): bigint {
@@ -1798,8 +1805,12 @@ export class NeoN3Provider implements NeoProvider {
   }
 
   private async getNeoN3NetworkMagic(): Promise<number> {
-    if (!this.neoN3NetworkMagicPromise) {
-      this.neoN3NetworkMagicPromise = (async () => {
+    return this.getOrCreateCachedPromise(
+      () => this.neoN3NetworkMagicPromise,
+      (promise) => {
+        this.neoN3NetworkMagicPromise = promise;
+      },
+      async () => {
         const version = await this.neoN3RpcClient.getVersion();
         const networkMagic = Number(version.protocol.network);
 
@@ -1811,10 +1822,8 @@ export class NeoN3Provider implements NeoProvider {
         }
 
         return networkMagic;
-      })();
-    }
-
-    return this.neoN3NetworkMagicPromise;
+      },
+    );
   }
 
   private requireImplementedNetwork(
@@ -1845,67 +1854,80 @@ export class NeoN3Provider implements NeoProvider {
   }
 
   private async resolveNeoN3FlamingoRouterContractAddress(): Promise<string> {
-    if (!this.neoN3ResolvedFlamingoRouterContractPromise) {
-      this.neoN3ResolvedFlamingoRouterContractPromise =
-        this.resolveNeoN3FlamingoContractAddress({
+    return this.getOrCreateCachedPromise(
+      () => this.neoN3ResolvedFlamingoRouterContractPromise,
+      (promise) => {
+        this.neoN3ResolvedFlamingoRouterContractPromise = promise;
+      },
+      () => {
+        return this.resolveNeoN3FlamingoContractAddress({
           configuredAddress: this.config.neoN3.flamingoRouterContract,
           operationNames: ["getAmountsOut", "getBrokerContract"],
           environmentVariableName: "NEO_N3_FLAMINGO_ROUTER_CONTRACT",
           defaultByNetworkMagic: {
             [neoN3MainnetNetworkMagic]:
-              defaultNeoN3MainnetFlamingoRouterContract,
+              defaultNeoN3FlamingoContractsByNetwork.mainnet.router,
             [neoN3TestnetNetworkMagic]:
-              defaultNeoN3TestnetFlamingoRouterContract,
+              defaultNeoN3FlamingoContractsByNetwork.testnet.router,
           },
         });
-    }
-
-    return this.neoN3ResolvedFlamingoRouterContractPromise;
+      },
+    );
   }
 
   private async resolveNeoN3FlamingoBrokerContractAddress(): Promise<string> {
-    if (!this.neoN3ResolvedFlamingoBrokerContractPromise) {
-      this.neoN3ResolvedFlamingoBrokerContractPromise =
-        this.resolveNeoN3FlamingoContractAddress({
+    return this.getOrCreateCachedPromise(
+      () => this.neoN3ResolvedFlamingoBrokerContractPromise,
+      (promise) => {
+        this.neoN3ResolvedFlamingoBrokerContractPromise = promise;
+      },
+      () => {
+        return this.resolveNeoN3FlamingoContractAddress({
           configuredAddress: this.config.neoN3.flamingoBrokerContract,
           operationNames: ["getPairCounter", "getBaseToken", "getQuoteToken"],
           environmentVariableName: "NEO_N3_FLAMINGO_BROKER_CONTRACT",
           defaultByNetworkMagic: {
             [neoN3MainnetNetworkMagic]:
-              defaultNeoN3MainnetFlamingoBrokerContract,
+              defaultNeoN3FlamingoContractsByNetwork.mainnet.broker,
             [neoN3TestnetNetworkMagic]:
-              defaultNeoN3TestnetFlamingoBrokerContract,
+              defaultNeoN3FlamingoContractsByNetwork.testnet.broker,
           },
         });
-    }
-
-    return this.neoN3ResolvedFlamingoBrokerContractPromise;
+      },
+    );
   }
 
   private async resolveNeoN3FlamingoConvertContractAddress(): Promise<string> {
-    if (!this.neoN3ResolvedFlamingoConvertContractPromise) {
-      this.neoN3ResolvedFlamingoConvertContractPromise =
-        this.resolveNeoN3FlamingoContractAddress({
+    return this.getOrCreateCachedPromise(
+      () => this.neoN3ResolvedFlamingoConvertContractPromise,
+      (promise) => {
+        this.neoN3ResolvedFlamingoConvertContractPromise = promise;
+      },
+      () => {
+        return this.resolveNeoN3FlamingoContractAddress({
           configuredAddress: this.config.neoN3.flamingoConvertContract,
           operationNames: ["standardConvert", "emulateStandardConvert"],
           environmentVariableName: "NEO_N3_FLAMINGO_CONVERT_CONTRACT",
           defaultByNetworkMagic: {
             [neoN3MainnetNetworkMagic]:
-              defaultNeoN3MainnetFlamingoConvertContract,
+              defaultNeoN3FlamingoContractsByNetwork.mainnet.convert,
             [neoN3TestnetNetworkMagic]:
-              defaultNeoN3TestnetFlamingoConvertContract,
+              defaultNeoN3FlamingoContractsByNetwork.testnet.convert,
           },
         });
-    }
-
-    return this.neoN3ResolvedFlamingoConvertContractPromise;
+      },
+    );
   }
 
   private async getNeoN3FlamingoTradingPairs(): Promise<
     NeoN3FlamingoTradingPair[]
   > {
-    if (!this.neoN3FlamingoTradingPairsPromise) {
-      this.neoN3FlamingoTradingPairsPromise = (async () => {
+    return this.getOrCreateCachedPromise(
+      () => this.neoN3FlamingoTradingPairsPromise,
+      (promise) => {
+        this.neoN3FlamingoTradingPairsPromise = promise;
+      },
+      async () => {
         const brokerContract =
           await this.resolveNeoN3FlamingoBrokerContractAddress();
         const pairCounter = Number(
@@ -1942,10 +1964,8 @@ export class NeoN3Provider implements NeoProvider {
         return pairs.filter(
           (pair) => pair.baseTokenHash !== pair.quoteTokenHash,
         );
-      })();
-    }
-
-    return this.neoN3FlamingoTradingPairsPromise;
+      },
+    );
   }
 
   private findNeoN3FlamingoTradingPair(
@@ -2057,6 +2077,54 @@ export class NeoN3Provider implements NeoProvider {
         defaultAddress,
       },
     );
+  }
+
+  private getOrCreateCachedPromise<T>(
+    getCachedPromise: () => Promise<T> | undefined,
+    setCachedPromise: (promise: Promise<T> | undefined) => void,
+    factory: () => Promise<T>,
+  ): Promise<T> {
+    const cachedPromise = getCachedPromise();
+
+    if (cachedPromise) {
+      return cachedPromise;
+    }
+
+    let task: Promise<T>;
+    task = factory().catch((error: unknown) => {
+      if (getCachedPromise() === task) {
+        setCachedPromise(undefined);
+      }
+
+      throw error;
+    });
+    setCachedPromise(task);
+
+    return task;
+  }
+
+  private getOrCreateMapCachedPromise<K, T>(
+    cache: Map<K, Promise<T>>,
+    key: K,
+    factory: () => Promise<T>,
+  ): Promise<T> {
+    const cachedPromise = cache.get(key);
+
+    if (cachedPromise) {
+      return cachedPromise;
+    }
+
+    let task: Promise<T>;
+    task = factory().catch((error: unknown) => {
+      if (cache.get(key) === task) {
+        cache.delete(key);
+      }
+
+      throw error;
+    });
+    cache.set(key, task);
+
+    return task;
   }
 
   private async neoN3ContractSupportsOperations(

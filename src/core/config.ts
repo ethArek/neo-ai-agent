@@ -14,18 +14,18 @@ const defaultNeoN3MainnetNnsContract =
   "0x50ac1c37690cc2cfc594472833cf57505d5f46de";
 const defaultNeoN3TestnetNnsContract =
   "0x538355b776538a5da0b2a08c139b9900b9c0cbb6";
-const defaultNeoN3MainnetFlamingoBrokerContract =
-  "0xec268e9c642b7d09d10fe658bcb1cc63c0895d4d";
-const defaultNeoN3TestnetFlamingoBrokerContract =
-  "0xb5e260839b427ef72faf5e563a241922da9c6cc8";
-const defaultNeoN3MainnetFlamingoConvertContract =
-  "0xf40f694362957d56801a8cef7e62a83f7f1b7b0f";
-const defaultNeoN3TestnetFlamingoConvertContract =
-  "0x160f5d64947b2d71d949c2e751d5cf13bfb2e199";
-const defaultNeoN3MainnetFlamingoRouterContract =
-  "0xde3a4b093abbd07e9a69cdec88a54d9a1fe14975";
-const defaultNeoN3TestnetFlamingoRouterContract =
-  "0x9f4dd9684638f839f3f62cc3440c3f1c8bad541b";
+export const defaultNeoN3FlamingoContractsByNetwork = Object.freeze({
+  mainnet: Object.freeze({
+    broker: "0xec268e9c642b7d09d10fe658bcb1cc63c0895d4d",
+    convert: "0xf40f694362957d56801a8cef7e62a83f7f1b7b0f",
+    router: "0xde3a4b093abbd07e9a69cdec88a54d9a1fe14975",
+  }),
+  testnet: Object.freeze({
+    broker: "0xb5e260839b427ef72faf5e563a241922da9c6cc8",
+    convert: "0x160f5d64947b2d71d949c2e751d5cf13bfb2e199",
+    router: "0x9f4dd9684638f839f3f62cc3440c3f1c8bad541b",
+  }),
+});
 const defaultNeoN3MainnetTokenMap = Object.freeze({
   FLM: "0xf0151f528127558851b39c2cd8aa47da7418ab28",
   FUSD: "0x1005d400bcc2a56b7352f09e273be3f9933a5fb1",
@@ -445,22 +445,22 @@ export function loadConfig(): AppConfig {
       flamingoBrokerContract: parseOptionalHash160(
         env.NEO_N3_FLAMINGO_BROKER_CONTRACT ??
           (network === "testnet"
-            ? defaultNeoN3TestnetFlamingoBrokerContract
-            : defaultNeoN3MainnetFlamingoBrokerContract),
+            ? defaultNeoN3FlamingoContractsByNetwork.testnet.broker
+            : defaultNeoN3FlamingoContractsByNetwork.mainnet.broker),
         "NEO_N3_FLAMINGO_BROKER_CONTRACT",
       ),
       flamingoConvertContract: parseOptionalHash160(
         env.NEO_N3_FLAMINGO_CONVERT_CONTRACT ??
           (network === "testnet"
-            ? defaultNeoN3TestnetFlamingoConvertContract
-            : defaultNeoN3MainnetFlamingoConvertContract),
+            ? defaultNeoN3FlamingoContractsByNetwork.testnet.convert
+            : defaultNeoN3FlamingoContractsByNetwork.mainnet.convert),
         "NEO_N3_FLAMINGO_CONVERT_CONTRACT",
       ),
       flamingoRouterContract: parseOptionalHash160(
         env.NEO_N3_FLAMINGO_ROUTER_CONTRACT ??
           (network === "testnet"
-            ? defaultNeoN3TestnetFlamingoRouterContract
-            : defaultNeoN3MainnetFlamingoRouterContract),
+            ? defaultNeoN3FlamingoContractsByNetwork.testnet.router
+            : defaultNeoN3FlamingoContractsByNetwork.mainnet.router),
         "NEO_N3_FLAMINGO_ROUTER_CONTRACT",
       ),
       tokenMap: configuredNeoN3TokenMap,

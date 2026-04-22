@@ -4,7 +4,10 @@ import {
   wallet as neoWallet,
 } from "@cityofzion/neon-js";
 
-import type { AppConfig } from "../src/core/config";
+import {
+  defaultNeoN3FlamingoContractsByNetwork,
+  type AppConfig,
+} from "../src/core/config";
 import { createNeoProvider, NeoN3Provider } from "../src/neo/client";
 
 const neoN3MainnetNnsContract = "0x50ac1c37690cc2cfc594472833cf57505d5f46de";
@@ -25,9 +28,12 @@ function createConfig(n3WalletPrivateKey: string): AppConfig {
       walletEnabled: true,
       gasTokenContract: neoN3GasTokenContract,
       nnsContract: neoN3MainnetNnsContract,
-      flamingoBrokerContract: "0xec268e9c642b7d09d10fe658bcb1cc63c0895d4d",
-      flamingoConvertContract: "0xf40f694362957d56801a8cef7e62a83f7f1b7b0f",
-      flamingoRouterContract: "0xde3a4b093abbd07e9a69cdec88a54d9a1fe14975",
+      flamingoBrokerContract:
+        defaultNeoN3FlamingoContractsByNetwork.mainnet.broker,
+      flamingoConvertContract:
+        defaultNeoN3FlamingoContractsByNetwork.mainnet.convert,
+      flamingoRouterContract:
+        defaultNeoN3FlamingoContractsByNetwork.mainnet.router,
       tokenMap: {},
       flamingoPairs: [],
     },
@@ -62,6 +68,228 @@ class SwapQuoteTestNeoProvider extends NeoN3Provider {
       tradingPairIds,
     );
   }
+
+  public async getNeoN3NetworkMagicForTest(): Promise<number> {
+    const method = Reflect.get(this, "getNeoN3NetworkMagic");
+
+    if (typeof method !== "function") {
+      throw new Error("Expected getNeoN3NetworkMagic to be a function.");
+    }
+
+    const value = await method.call(this);
+
+    if (typeof value !== "number") {
+      throw new Error("Expected getNeoN3NetworkMagic to resolve to a number.");
+    }
+
+    return value;
+  }
+
+  public async resolveNeoN3FlamingoBrokerContractAddressForTest(): Promise<string> {
+    const method = Reflect.get(
+      this,
+      "resolveNeoN3FlamingoBrokerContractAddress",
+    );
+
+    if (typeof method !== "function") {
+      throw new Error(
+        "Expected resolveNeoN3FlamingoBrokerContractAddress to be a function.",
+      );
+    }
+
+    const value = await method.call(this);
+
+    if (typeof value !== "string") {
+      throw new Error(
+        "Expected resolveNeoN3FlamingoBrokerContractAddress to resolve to a string.",
+      );
+    }
+
+    return value;
+  }
+
+  public async getNeoN3FlamingoTradingPairsForTest(): Promise<
+    Array<{
+      pairId: number;
+      baseTokenHash: string;
+      quoteTokenHash: string;
+    }>
+  > {
+    const method = Reflect.get(this, "getNeoN3FlamingoTradingPairs");
+
+    if (typeof method !== "function") {
+      throw new Error(
+        "Expected getNeoN3FlamingoTradingPairs to be a function.",
+      );
+    }
+
+    const value = await method.call(this);
+
+    if (!Array.isArray(value)) {
+      throw new Error(
+        "Expected getNeoN3FlamingoTradingPairs to resolve to an array.",
+      );
+    }
+
+    return value.map((entry) => {
+      if (
+        typeof entry !== "object" ||
+        entry === null ||
+        !("pairId" in entry) ||
+        typeof entry.pairId !== "number" ||
+        !("baseTokenHash" in entry) ||
+        typeof entry.baseTokenHash !== "string" ||
+        !("quoteTokenHash" in entry) ||
+        typeof entry.quoteTokenHash !== "string"
+      ) {
+        throw new Error(
+          "Expected getNeoN3FlamingoTradingPairs entries to include pairId, baseTokenHash, and quoteTokenHash.",
+        );
+      }
+
+      return {
+        pairId: entry.pairId,
+        baseTokenHash: entry.baseTokenHash,
+        quoteTokenHash: entry.quoteTokenHash,
+      };
+    });
+  }
+
+  public normalizeSwapSlippagePercentForTest(requested?: string): string {
+    const method = Reflect.get(this, "normalizeSwapSlippagePercent");
+
+    if (typeof method !== "function") {
+      throw new Error(
+        "Expected normalizeSwapSlippagePercent to be a function.",
+      );
+    }
+
+    const value = method.call(this, requested);
+
+    if (typeof value !== "string") {
+      throw new Error(
+        "Expected normalizeSwapSlippagePercent to return a string.",
+      );
+    }
+
+    return value;
+  }
+
+  public toBasisPointsForTest(percent: string): number {
+    const method = Reflect.get(this, "toBasisPoints");
+
+    if (typeof method !== "function") {
+      throw new Error("Expected toBasisPoints to be a function.");
+    }
+
+    const value = method.call(this, percent);
+
+    if (typeof value !== "number") {
+      throw new Error("Expected toBasisPoints to return a number.");
+    }
+
+    return value;
+  }
+}
+
+function createVersionResponse(networkMagic: number) {
+  return {
+    tcpport: 10333,
+    wsport: 10334,
+    nonce: 1,
+    useragent: "/Neo:test/",
+    protocol: {
+      addressversion: 53,
+      network: networkMagic,
+      validatorscount: 7,
+      msperblock: 15000,
+      maxtraceableblocks: 2_102_400,
+      maxvaliduntilblockincrement: 5_760,
+      maxtransactionsperblock: 512,
+      memorypoolmaxtransactions: 50_000,
+      initialgasdistribution: 5_200_000_000_000_000,
+    },
+  };
+}
+
+function createContractStateWithMethods(
+  methodNames: string[],
+): Awaited<
+  ReturnType<InstanceType<typeof neoRpc.RPCClient>["getContractState"]>
+> {
+  return {
+    id: 1,
+    updatecounter: 0,
+    hash: defaultNeoN3FlamingoContractsByNetwork.mainnet.broker,
+    nef: {
+      magic: 860833102,
+      compiler: "test",
+      script: "",
+      tokens: [],
+      source: "",
+      checksum: 0,
+    },
+    manifest: {
+      name: "test-contract",
+      groups: [],
+      features: {},
+      supportedstandards: [],
+      abi: {
+        methods: methodNames.map((name) => ({
+          name,
+          offset: 0,
+          parameters: [],
+          returntype: "Integer",
+          safe: true,
+        })),
+        events: [],
+      },
+      permissions: [],
+      trusts: [],
+    },
+  };
+}
+
+function createIntegerInvokeResult(
+  value: string,
+): Awaited<
+  ReturnType<InstanceType<typeof neoRpc.RPCClient>["invokeFunction"]>
+> {
+  return {
+    script: "00",
+    state: "HALT",
+    gasconsumed: "0",
+    stack: [
+      {
+        type: "Integer",
+        value,
+      },
+    ],
+    exception: null,
+    notifications: [],
+  };
+}
+
+function createHash160InvokeResult(
+  value: string,
+): Awaited<
+  ReturnType<InstanceType<typeof neoRpc.RPCClient>["invokeFunction"]>
+> {
+  const bytes = Buffer.from(value.slice(2), "hex").reverse();
+
+  return {
+    script: "00",
+    state: "HALT",
+    gasconsumed: "0",
+    stack: [
+      {
+        type: "ByteString",
+        value: bytes.toString("base64"),
+      },
+    ],
+    exception: null,
+    notifications: [],
+  };
 }
 
 describe("NeoProvider", () => {
@@ -225,5 +453,107 @@ describe("NeoProvider", () => {
       decimals: 8,
     });
     expect(invokeFunctionSpy).not.toHaveBeenCalled();
+  });
+
+  it("retries the network magic lookup after a failed cached attempt", async () => {
+    const account = new neoWallet.Account();
+    const provider = new SwapQuoteTestNeoProvider(createConfig(account.WIF));
+    const getVersionSpy = jest
+      .spyOn(neoRpc.RPCClient.prototype, "getVersion")
+      .mockRejectedValueOnce(new Error("RPC unavailable"))
+      .mockResolvedValueOnce(createVersionResponse(860_833_102));
+
+    await expect(provider.getNeoN3NetworkMagicForTest()).rejects.toThrow(
+      "RPC unavailable",
+    );
+
+    await expect(provider.getNeoN3NetworkMagicForTest()).resolves.toBe(
+      860_833_102,
+    );
+    expect(getVersionSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries Flamingo broker contract resolution after a failed cached attempt", async () => {
+    const account = new neoWallet.Account();
+    const provider = new SwapQuoteTestNeoProvider(createConfig(account.WIF));
+
+    jest
+      .spyOn(neoRpc.RPCClient.prototype, "getVersion")
+      .mockResolvedValue(createVersionResponse(860_833_102));
+    const getContractStateSpy = jest
+      .spyOn(neoRpc.RPCClient.prototype, "getContractState")
+      .mockRejectedValueOnce(new Error("Contract not reachable"))
+      .mockResolvedValueOnce(
+        createContractStateWithMethods([
+          "getPairCounter",
+          "getBaseToken",
+          "getQuoteToken",
+        ]),
+      );
+
+    await expect(
+      provider.resolveNeoN3FlamingoBrokerContractAddressForTest(),
+    ).rejects.toThrow("Flamingo swap is not configured");
+
+    await expect(
+      provider.resolveNeoN3FlamingoBrokerContractAddressForTest(),
+    ).resolves.toBe(defaultNeoN3FlamingoContractsByNetwork.mainnet.broker);
+    expect(getContractStateSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries Flamingo trading pair loading after a failed cached attempt", async () => {
+    const account = new neoWallet.Account();
+    const provider = new SwapQuoteTestNeoProvider(createConfig(account.WIF));
+
+    jest
+      .spyOn(neoRpc.RPCClient.prototype, "getVersion")
+      .mockResolvedValue(createVersionResponse(860_833_102));
+    jest
+      .spyOn(neoRpc.RPCClient.prototype, "getContractState")
+      .mockResolvedValue(
+        createContractStateWithMethods([
+          "getPairCounter",
+          "getBaseToken",
+          "getQuoteToken",
+        ]),
+      );
+    const invokeFunctionSpy = jest
+      .spyOn(neoRpc.RPCClient.prototype, "invokeFunction")
+      .mockRejectedValueOnce(new Error("Temporary pair lookup failure"))
+      .mockResolvedValueOnce(createIntegerInvokeResult("1"))
+      .mockResolvedValueOnce(
+        createHash160InvokeResult(
+          defaultNeoN3FlamingoContractsByNetwork.mainnet.broker,
+        ),
+      )
+      .mockResolvedValueOnce(createHash160InvokeResult(bNeoMainnetContract));
+
+    await expect(
+      provider.getNeoN3FlamingoTradingPairsForTest(),
+    ).rejects.toThrow("Temporary pair lookup failure");
+
+    await expect(
+      provider.getNeoN3FlamingoTradingPairsForTest(),
+    ).resolves.toEqual([
+      {
+        pairId: 1,
+        baseTokenHash: defaultNeoN3FlamingoContractsByNetwork.mainnet.broker,
+        quoteTokenHash: bNeoMainnetContract,
+      },
+    ]);
+    expect(invokeFunctionSpy).toHaveBeenCalledTimes(4);
+  });
+
+  it("rejects swap slippage below one basis point", () => {
+    const account = new neoWallet.Account();
+    const provider = new SwapQuoteTestNeoProvider(createConfig(account.WIF));
+
+    expect(() => {
+      provider.normalizeSwapSlippagePercentForTest("0.001");
+    }).toThrow(
+      "Swap slippagePercent must be a decimal percent between 0.01 and 50 with up to 2 decimal places.",
+    );
+    expect(provider.normalizeSwapSlippagePercentForTest("0.01")).toBe("0.01");
+    expect(provider.toBasisPointsForTest("0.01")).toBe(1);
   });
 });
