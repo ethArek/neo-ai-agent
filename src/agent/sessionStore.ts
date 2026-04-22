@@ -22,13 +22,20 @@ interface AgentSession {
   updatedAt: number;
 }
 
+export interface SessionStoreOptions {
+  maxAgeMs?: number;
+  maxSessions?: number;
+}
+
 export class SessionStore {
   private readonly sessions = new Map<string, AgentSession>();
   private readonly maxAgeMs: number;
+  private readonly maxSessions?: number;
   private readonly maxRecentBroadcasts = 20;
 
-  public constructor(maxAgeMs = 1000 * 60 * 60) {
-    this.maxAgeMs = maxAgeMs;
+  public constructor(options: SessionStoreOptions = {}) {
+    this.maxAgeMs = options.maxAgeMs ?? 1000 * 60 * 60;
+    this.maxSessions = options.maxSessions;
   }
 
   public getOrCreate(sessionId?: string): AgentSession {
@@ -43,6 +50,8 @@ export class SessionStore {
         return existing;
       }
     }
+
+    this.evictOldestSessionIfNeeded();
 
     const session: AgentSession = {
       id: sessionId ?? randomUUID(),
@@ -223,6 +232,26 @@ export class SessionStore {
       if (now - session.updatedAt > this.maxAgeMs) {
         this.sessions.delete(sessionId);
       }
+    }
+  }
+
+  private evictOldestSessionIfNeeded(): void {
+    if (!this.maxSessions || this.sessions.size < this.maxSessions) {
+      return;
+    }
+
+    let oldestSessionId: string | undefined;
+    let oldestUpdatedAt = Number.POSITIVE_INFINITY;
+
+    for (const [sessionId, session] of this.sessions.entries()) {
+      if (session.updatedAt < oldestUpdatedAt) {
+        oldestSessionId = sessionId;
+        oldestUpdatedAt = session.updatedAt;
+      }
+    }
+
+    if (oldestSessionId) {
+      this.sessions.delete(oldestSessionId);
     }
   }
 }

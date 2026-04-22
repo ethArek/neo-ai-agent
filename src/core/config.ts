@@ -257,6 +257,8 @@ const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(3000),
   API_HOST: z.string().trim().min(1).default("0.0.0.0"),
   API_BEARER_TOKEN: optionalNonEmptyString,
+  SESSION_MAX_AGE_MINUTES: z.coerce.number().positive().default(60),
+  SESSION_MAX_ACTIVE_SESSIONS: z.coerce.number().int().positive().optional(),
   NODE_ENV: z
     .enum(["development", "test", "production"])
     .default("development"),
@@ -285,6 +287,10 @@ export interface AppConfig {
   api: {
     host: string;
     bearerToken?: string;
+  };
+  session: {
+    maxAgeMs: number;
+    maxActiveSessions?: number;
   };
   nodeEnv: "development" | "test" | "production";
   neoN3: {
@@ -424,6 +430,10 @@ export function loadConfig(): AppConfig {
     api: {
       host: env.API_HOST,
       bearerToken: env.API_BEARER_TOKEN,
+    },
+    session: {
+      maxAgeMs: Math.round(env.SESSION_MAX_AGE_MINUTES * 60_000),
+      maxActiveSessions: env.SESSION_MAX_ACTIVE_SESSIONS,
     },
     nodeEnv: env.NODE_ENV,
     neoN3: {

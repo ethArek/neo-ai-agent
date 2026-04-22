@@ -40,6 +40,7 @@ export interface DraftToolAction {
   tool: ToolName;
   arguments: Record<string, unknown>;
   missingInputs: string[];
+  executionPolicy?: PlannerExecutionPolicy;
   createdAt: string;
 }
 
@@ -119,7 +120,12 @@ export interface PlannerAction {
   arguments: Record<string, unknown>;
   needsConfirmation: boolean;
   missingInputs: string[];
+  executionPolicy?: PlannerExecutionPolicy;
   explanation?: string;
+}
+
+export interface PlannerExecutionPolicy {
+  allowForceSwap: boolean;
 }
 
 export interface PlannerContext {

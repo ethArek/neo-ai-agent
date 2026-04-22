@@ -5,11 +5,10 @@ import {
   neoN3AddressOrNeoNsSchema,
   positiveDecimalAmountSchema,
 } from "../core/validation";
-import { createBroadcastMessage } from "../neo/broadcast";
 import {
-  createPendingTransactionAction,
-  requirePreparedTransaction,
-} from "./helpers";
+  confirmPreparedTransaction,
+  createPreparedTransactionResult,
+} from "./confirmableTransaction";
 
 const inputSchema = z.object({
   to: neoN3AddressOrNeoNsSchema,
@@ -32,28 +31,10 @@ export const sendNeoN3GasTool: ToolDefinition<Input> = {
     const parsed = inputSchema.parse(input);
 
     if (options?.confirm) {
-      const prepared = requirePreparedTransaction(options, "sendNeoN3Gas");
-      const broadcast = await context.neo.signAndBroadcast(prepared);
-
-      return {
-        message: createBroadcastMessage(broadcast),
-        data: broadcast,
-        preparedTransaction: prepared,
-      };
+      return confirmPreparedTransaction(context, options, "sendNeoN3Gas");
     }
 
     const prepared = await context.neo.prepareNeoN3GasTransfer(parsed);
-    const pendingAction = createPendingTransactionAction(
-      "sendNeoN3Gas",
-      parsed,
-      prepared,
-    );
-
-    return {
-      message: `${prepared.summary} Reply with "Confirm" to sign and broadcast.`,
-      data: prepared,
-      requiresConfirmation: true,
-      pendingAction,
-    };
+    return createPreparedTransactionResult("sendNeoN3Gas", parsed, prepared);
   },
 };

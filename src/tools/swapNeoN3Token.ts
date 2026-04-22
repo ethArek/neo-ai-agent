@@ -1,11 +1,11 @@
 import type { z } from "zod";
 
 import type { ToolDefinition } from "../agent/types";
-import { createBroadcastMessage } from "../neo/broadcast";
 import {
-  createPendingTransactionAction,
-  requirePreparedTransaction,
-} from "./helpers";
+  broadcastPreparedTransaction,
+  confirmPreparedTransaction,
+  createPreparedTransactionResult,
+} from "./confirmableTransaction";
 import { neoN3SwapInputSchema } from "./neoN3SwapSchemas";
 
 type Input = z.infer<typeof neoN3SwapInputSchema>;
@@ -24,39 +24,19 @@ export const swapNeoN3TokenTool: ToolDefinition<Input> = {
     const parsed = neoN3SwapInputSchema.parse(input);
 
     if (options?.confirm) {
-      const prepared = requirePreparedTransaction(options, "swapNeoN3Token");
-      const broadcast = await context.neo.signAndBroadcast(prepared);
-
-      return {
-        message: createBroadcastMessage(broadcast),
-        data: broadcast,
-        preparedTransaction: prepared,
-      };
-    }
-
-    if (parsed.force) {
-      const prepared = await context.neo.prepareNeoN3TokenSwap(parsed);
-      const broadcast = await context.neo.signAndBroadcast(prepared);
-
-      return {
-        message: `Force swap requested. ${createBroadcastMessage(broadcast)}`,
-        data: broadcast,
-        preparedTransaction: prepared,
-      };
+      return confirmPreparedTransaction(context, options, "swapNeoN3Token");
     }
 
     const prepared = await context.neo.prepareNeoN3TokenSwap(parsed);
-    const pendingAction = createPendingTransactionAction(
-      "swapNeoN3Token",
-      parsed,
-      prepared,
-    );
 
-    return {
-      message: `${prepared.summary} Reply with "Confirm" to sign and broadcast.`,
-      data: prepared,
-      requiresConfirmation: true,
-      pendingAction,
-    };
+    if (parsed.force) {
+      return broadcastPreparedTransaction(
+        context,
+        prepared,
+        "Force swap requested.",
+      );
+    }
+
+    return createPreparedTransactionResult("swapNeoN3Token", parsed, prepared);
   },
 };

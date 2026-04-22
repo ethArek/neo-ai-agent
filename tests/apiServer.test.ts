@@ -224,6 +224,12 @@ describe("REST API server", () => {
         tool: string | null;
         requiresConfirmation: boolean;
         message: string;
+        result: {
+          address: string;
+          tokens: Array<{
+            requestedToken: string;
+          }>;
+        };
       };
 
       expect(response.status).toBe(200);
@@ -231,6 +237,17 @@ describe("REST API server", () => {
       expect(payload.requiresConfirmation).toBe(false);
       expect(payload.message).toContain("Force swap requested");
       expect(payload.message).toContain("Submitted a Flamingo swap");
+      expect(payload.result).toMatchObject({
+        address: setup.provider.neoN3Address,
+        tokens: [
+          {
+            requestedToken: "GAS",
+          },
+          {
+            requestedToken: "FUSD",
+          },
+        ],
+      });
       expect(prepareSpy).toHaveBeenCalledWith({
         amount: "1",
         fromToken: "GAS",

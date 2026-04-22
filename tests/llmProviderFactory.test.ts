@@ -13,6 +13,9 @@ function createConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     api: {
       host: "127.0.0.1",
     },
+    session: {
+      maxAgeMs: 60 * 60 * 1000,
+    },
     nodeEnv: "test",
     neoN3: {
       network: "mainnet",

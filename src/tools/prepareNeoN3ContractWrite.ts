@@ -2,11 +2,10 @@ import { z } from "zod";
 
 import type { ToolDefinition } from "../agent/types";
 import { hash160Schema } from "../core/validation";
-import { createBroadcastMessage } from "../neo/broadcast";
 import {
-  createPendingTransactionAction,
-  requirePreparedTransaction,
-} from "./helpers";
+  confirmPreparedTransaction,
+  createPreparedTransactionResult,
+} from "./confirmableTransaction";
 
 const inputSchema = z.object({
   contractHash: hash160Schema,
@@ -31,31 +30,18 @@ export const prepareNeoN3ContractWriteTool: ToolDefinition<Input> = {
     const parsed = inputSchema.parse(input);
 
     if (options?.confirm) {
-      const prepared = requirePreparedTransaction(
+      return confirmPreparedTransaction(
+        context,
         options,
         "prepareNeoN3ContractWrite",
       );
-      const broadcast = await context.neo.signAndBroadcast(prepared);
-
-      return {
-        message: createBroadcastMessage(broadcast),
-        data: broadcast,
-        preparedTransaction: prepared,
-      };
     }
 
     const prepared = await context.neo.buildNeoN3ContractWrite(parsed);
-    const pendingAction = createPendingTransactionAction(
+    return createPreparedTransactionResult(
       "prepareNeoN3ContractWrite",
       parsed,
       prepared,
     );
-
-    return {
-      message: `${prepared.summary} Reply with "Confirm" to sign and broadcast.`,
-      data: prepared,
-      requiresConfirmation: true,
-      pendingAction,
-    };
   },
 };

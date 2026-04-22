@@ -22,7 +22,10 @@ export function createAgentApp(config: AppConfig): AgentApp {
     planner,
     registry,
     neo: createNeoProvider(config),
-    sessions: new SessionStore(),
+    sessions: new SessionStore({
+      maxAgeMs: config.session.maxAgeMs,
+      maxSessions: config.session.maxActiveSessions,
+    }),
   });
 
   return {

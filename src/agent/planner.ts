@@ -11,6 +11,10 @@ import { logger } from "../core/logger";
 import { hash256Schema } from "../core/validation";
 import type { LlmProvider } from "../llm/provider";
 import type { NeoNetwork } from "../neo/types";
+import {
+  createPlannerExecutionPolicy,
+  isExplicitForceSwapRequest,
+} from "./executionPolicy";
 import type {
   PlannerAction,
   PlannerContext,
@@ -67,7 +71,7 @@ export class PlannerService {
           return this.heuristicPlan(message, context);
         }
 
-        return this.normalizePlan(providerPlan);
+        return this.normalizePlan(providerPlan, message);
       } catch (error) {
         logger.warn("Falling back to heuristic planner.", {
           error: error instanceof Error ? error.message : error,
@@ -78,7 +82,9 @@ export class PlannerService {
     return this.heuristicPlan(message, context);
   }
 
-  private parseProviderOutput(rawOutput: string): PlannerAction {
+  private parseProviderOutput(
+    rawOutput: string,
+  ): z.infer<typeof plannerResponseSchema> {
     const jsonCandidate = this.extractJsonObject(rawOutput);
     const parsed = plannerResponseSchema.safeParse(JSON.parse(jsonCandidate));
 
@@ -89,11 +95,12 @@ export class PlannerService {
       );
     }
 
-    return this.normalizePlan(parsed.data);
+    return parsed.data;
   }
 
   private normalizePlan(
     plan: z.infer<typeof plannerResponseSchema>,
+    sourceMessage: string,
   ): PlannerAction {
     const selectedTool =
       plan.tool && this.isSupportedTool(plan.tool) ? plan.tool : null;
@@ -107,6 +114,10 @@ export class PlannerService {
       arguments: plan.arguments,
       needsConfirmation: descriptor ? descriptor.dangerous : false,
       missingInputs: plan.missingInputs,
+      executionPolicy: createPlannerExecutionPolicy(
+        selectedTool,
+        sourceMessage,
+      ),
       explanation: plan.explanation,
     };
   }
@@ -209,6 +220,9 @@ export class PlannerService {
         arguments: swapArguments,
         needsConfirmation: !swapParameters.force,
         missingInputs,
+        executionPolicy: {
+          allowForceSwap: swapParameters.force,
+        },
         explanation: swapParameters.force
           ? "Detected a forced Neo N3 Flamingo swap request."
           : "Detected a Neo N3 Flamingo swap request.",
@@ -669,7 +683,7 @@ export class PlannerService {
       deadlineMinutes: deadlineCandidate
         ? Number(deadlineCandidate)
         : undefined,
-      force: /\bforce\b/i.test(message),
+      force: isExplicitForceSwapRequest(message),
     };
   }
 
@@ -698,7 +712,9 @@ export class PlannerService {
   }
 
   private isProviderTryingToControlConfirmation(
-    plan: PlannerAction,
+    plan: {
+      intent: string;
+    },
     message: string,
   ): boolean {
     if (plan.intent === "confirm_action") {

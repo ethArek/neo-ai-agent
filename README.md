@@ -588,6 +588,7 @@ Most users can stop at `.env.example`, but the project also supports:
 - custom token maps
 - custom Flamingo pair configuration
 - custom API host and port
+- configurable in-memory session lifetime and session cap
 - custom OpenAI and Gemini model selection
 
 See:

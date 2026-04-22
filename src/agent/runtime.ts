@@ -18,6 +18,7 @@ import type {
   TransactionStatus,
   TransactionStatusState,
 } from "../neo/types";
+import { applyPlannerExecutionPolicy } from "./executionPolicy";
 import type { PlannerService } from "./planner";
 import type { SessionStore } from "./sessionStore";
 import type { ToolRegistry } from "./toolRegistry";
@@ -318,7 +319,10 @@ export class AgentRuntime {
             receipt,
             preparedTransaction,
           );
-          responseResult = receipt;
+          responseResult = this.buildBroadcastResponseResult(
+            request.tool,
+            receipt,
+          );
         }
       }
 
@@ -393,10 +397,15 @@ export class AgentRuntime {
     }
 
     this.sessions.clearDraftAction(sessionId);
+    const plannedArguments = applyPlannerExecutionPolicy({
+      tool: plan.tool,
+      argumentsPayload: plan.arguments,
+      executionPolicy: plan.executionPolicy,
+    });
 
     return this.executeTool({
       tool: plan.tool,
-      arguments: plan.arguments,
+      arguments: plannedArguments,
       sessionId,
     });
   }
@@ -452,6 +461,7 @@ export class AgentRuntime {
       tool: plan.tool,
       arguments: plan.arguments,
       missingInputs: [...plan.missingInputs],
+      executionPolicy: plan.executionPolicy,
       createdAt: new Date().toISOString(),
     };
   }
@@ -591,6 +601,7 @@ export class AgentRuntime {
       arguments: mergedArguments,
       needsConfirmation: this.registry.get(draftAction.tool).dangerous,
       missingInputs: [],
+      executionPolicy: draftAction.executionPolicy,
       explanation: `Completed the missing inputs for ${draftAction.tool}.`,
     };
   }
@@ -982,14 +993,23 @@ export class AgentRuntime {
       case "failed":
         return `On-chain status: failed. ${status.summary}`;
       case "pending":
-        return "On-chain status: still pending after waiting for confirmation.";
       case "submitted":
-        return "On-chain status: submitted and waiting for confirmation.";
       case "not_found":
-        return "On-chain status: not visible on-chain yet.";
+        return "Waiting for transaction to confirm.";
       default:
         return `On-chain status: ${status.status}.`;
     }
+  }
+
+  private buildBroadcastResponseResult(
+    tool: ToolName,
+    receipt: BroadcastReceipt,
+  ): unknown {
+    if (tool === "swapNeoN3Token") {
+      return receipt.postTransactionBalances ?? null;
+    }
+
+    return receipt;
   }
 
   private buildPostTransactionBalancesLine(
