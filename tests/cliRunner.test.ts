@@ -124,4 +124,77 @@ describe("runCli", () => {
       }
     }
   });
+
+  it("updates the spinner label while waiting for on-chain confirmation", async () => {
+    jest.useFakeTimers();
+
+    const stdoutWriteSpy = jest
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+    const runtime = createRuntime();
+    const ttyDescriptor = Object.getOwnPropertyDescriptor(
+      process.stdout,
+      "isTTY",
+    );
+
+    Object.defineProperty(process.stdout, "isTTY", {
+      configurable: true,
+      value: true,
+    });
+
+    jest.spyOn(runtime, "handleMessage").mockImplementation(
+      async (_message, _sessionId, options) =>
+        new Promise((resolve) => {
+          setTimeout(() => {
+            options?.onProgress?.({
+              phase: "waiting_for_confirmation",
+              label: "Swap submitted. Tracking on-chain confirmation...",
+            });
+          }, 220);
+
+          setTimeout(() => {
+            resolve({
+              sessionId: "session-1",
+              message: "Submitted a Flamingo swap.",
+              tool: "swapNeoN3Token",
+              arguments: {},
+              result: null,
+              requiresConfirmation: false,
+            });
+          }, 400);
+        }),
+    );
+
+    try {
+      const runPromise = runCli(runtime, [
+        "force",
+        "swap",
+        "0.5",
+        "gas",
+        "to",
+        "bneo",
+      ]);
+
+      await jest.advanceTimersByTimeAsync(150);
+
+      expect(stdoutWriteSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Working on your Neo request"),
+      );
+
+      await jest.advanceTimersByTimeAsync(100);
+
+      expect(stdoutWriteSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Tracking on-chain confirmation"),
+      );
+
+      await jest.advanceTimersByTimeAsync(200);
+      await expect(runPromise).resolves.toBeUndefined();
+    } finally {
+      if (ttyDescriptor) {
+        Object.defineProperty(process.stdout, "isTTY", ttyDescriptor);
+      } else {
+        delete (process.stdout as { isTTY?: boolean }).isTTY;
+      }
+    }
+  });
 });

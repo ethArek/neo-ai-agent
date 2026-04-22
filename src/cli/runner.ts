@@ -2,7 +2,7 @@ import { stdin as input, stdout as output } from "node:process";
 import { createInterface } from "node:readline/promises";
 import { Command, InvalidArgumentError } from "commander";
 
-import type { AgentRuntime } from "../agent/runtime";
+import type { AgentProgressUpdate, AgentRuntime } from "../agent/runtime";
 import type { ToolName } from "../agent/types";
 import { toolNames } from "../agent/types";
 import { serializeError } from "../core/errors";
@@ -104,15 +104,19 @@ function printCliError(
 }
 
 async function runWithSpinner<T>(
-  task: () => Promise<T>,
+  task: (controls: { setLabel: (label: string) => void }) => Promise<T>,
   options: {
     enabled: boolean;
     colorEnabled: boolean;
     label: string;
   },
 ): Promise<T> {
+  const noopControls = {
+    setLabel: () => {},
+  };
+
   if (!options.enabled) {
-    return task();
+    return task(noopControls);
   }
 
   const theme = createCliTheme(options.colorEnabled);
@@ -121,12 +125,21 @@ async function runWithSpinner<T>(
   let spinnerStarted = false;
   let intervalHandle: ReturnType<typeof setInterval> | undefined;
   let delayHandle: ReturnType<typeof setTimeout> | undefined;
+  let currentLabel = options.label;
 
   const renderFrame = (): void => {
     const frame = frames[frameIndex % frames.length];
 
     frameIndex += 1;
-    output.write(`\r${theme.renderMuted(`${frame} ${options.label}`)}`);
+    output.write(`\r${theme.renderMuted(`${frame} ${currentLabel}`)}`);
+  };
+
+  const setLabel = (label: string): void => {
+    currentLabel = label;
+
+    if (spinnerStarted) {
+      renderFrame();
+    }
   };
 
   const cleanup = (): void => {
@@ -150,7 +163,9 @@ async function runWithSpinner<T>(
   }, 120);
 
   try {
-    const result = await task();
+    const result = await task({
+      setLabel,
+    });
 
     cleanup();
 
@@ -159,6 +174,15 @@ async function runWithSpinner<T>(
     cleanup();
 
     throw error;
+  }
+}
+
+function updateSpinnerForProgress(
+  update: AgentProgressUpdate,
+  setLabel: (label: string) => void,
+): void {
+  if (update.phase === "waiting_for_confirmation") {
+    setLabel(update.label);
   }
 }
 
@@ -195,7 +219,12 @@ async function runInteractive(
 
       try {
         const response = await runWithSpinner(
-          () => runtime.handleMessage(line, sessionId),
+          ({ setLabel }) =>
+            runtime.handleMessage(line, sessionId, {
+              onProgress: (update) => {
+                updateSpinnerForProgress(update, setLabel);
+              },
+            }),
           {
             enabled: !json && Boolean(output.isTTY),
             colorEnabled,
@@ -261,7 +290,12 @@ async function handleNaturalLanguageRequest(
   }
 
   const response = await runWithSpinner(
-    () => runtime.handleMessage(messageParts.join(" ")),
+    ({ setLabel }) =>
+      runtime.handleMessage(messageParts.join(" "), undefined, {
+        onProgress: (update) => {
+          updateSpinnerForProgress(update, setLabel);
+        },
+      }),
     {
       enabled: !json && Boolean(output.isTTY),
       colorEnabled,
@@ -323,12 +357,19 @@ export async function runCli(
         options: { args: string; confirm?: boolean; json?: boolean },
       ) => {
         const response = await runWithSpinner(
-          () =>
-            runtime.executeTool({
-              tool,
-              arguments: parseJsonArguments(options.args),
-              confirm: Boolean(options.confirm),
-            }),
+          ({ setLabel }) =>
+            runtime.executeTool(
+              {
+                tool,
+                arguments: parseJsonArguments(options.args),
+                confirm: Boolean(options.confirm),
+              },
+              {
+                onProgress: (update) => {
+                  updateSpinnerForProgress(update, setLabel);
+                },
+              },
+            ),
           {
             enabled: !options.json && Boolean(output.isTTY),
             colorEnabled: theme.colorEnabled,

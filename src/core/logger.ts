@@ -1,7 +1,15 @@
 import pino from "pino";
 
 const sensitiveKeyPattern =
-  /(private|secret|seed|wif|token|authorization|api[_-]?key)/i;
+  /(private|secret|seed|wif|authorization|api[_-]?key)/i;
+const sensitiveTokenKeys = new Set([
+  "accesstoken",
+  "authtoken",
+  "bearertoken",
+  "idtoken",
+  "refreshtoken",
+  "sessiontoken",
+]);
 
 function maskString(value: string): string {
   if (value.length <= 8) {
@@ -9,6 +17,16 @@ function maskString(value: string): string {
   }
 
   return `${value.slice(0, 4)}****${value.slice(-4)}`;
+}
+
+function normalizeLogKey(key: string): string {
+  return key.replaceAll(/[_-]/g, "").toLowerCase();
+}
+
+function isSensitiveLogKey(key: string): boolean {
+  const normalizedKey = normalizeLogKey(key);
+
+  return sensitiveKeyPattern.test(key) || sensitiveTokenKeys.has(normalizedKey);
 }
 
 export function sanitizeForLogs(value: unknown): unknown {
@@ -23,7 +41,7 @@ export function sanitizeForLogs(value: unknown): unknown {
   if (typeof value === "object") {
     return Object.entries(value).reduce<Record<string, unknown>>(
       (accumulator, [key, entry]) => {
-        if (sensitiveKeyPattern.test(key)) {
+        if (isSensitiveLogKey(key)) {
           accumulator[key] =
             typeof entry === "string" ? maskString(entry) : "[REDACTED]";
         } else {

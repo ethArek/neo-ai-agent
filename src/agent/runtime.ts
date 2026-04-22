@@ -40,6 +40,15 @@ interface AgentRuntimeOptions {
   transactionPollingTimeoutMs?: number;
 }
 
+export interface AgentProgressUpdate {
+  phase: "waiting_for_confirmation";
+  label: string;
+}
+
+interface AgentRuntimeExecutionOptions {
+  onProgress?: (update: AgentProgressUpdate) => void;
+}
+
 export class AgentRuntime {
   private readonly planner: PlannerService;
   private readonly registry: ToolRegistry;
@@ -62,6 +71,7 @@ export class AgentRuntime {
   public async handleMessage(
     message: string,
     sessionId?: string,
+    options: AgentRuntimeExecutionOptions = {},
   ): Promise<AgentResponse> {
     const session = this.sessions.getOrCreate(sessionId);
     this.syncSessionNetworkContext(session.id);
@@ -69,7 +79,7 @@ export class AgentRuntime {
     const normalizedMessage = trimmedMessage.toLowerCase();
 
     if (session.pendingAction && this.isConfirmMessage(normalizedMessage)) {
-      return this.confirmPendingAction(session.id);
+      return this.confirmPendingAction(session.id, options);
     }
 
     if (session.pendingAction && this.isCancelMessage(normalizedMessage)) {
@@ -124,7 +134,7 @@ export class AgentRuntime {
     );
 
     if (completedDraftPlan) {
-      return this.executePlannedAction(session.id, completedDraftPlan);
+      return this.executePlannedAction(session.id, completedDraftPlan, options);
     }
 
     const plan = await this.planner.plan(trimmedMessage, {
@@ -168,7 +178,7 @@ export class AgentRuntime {
         };
       }
 
-      return this.confirmPendingAction(session.id);
+      return this.confirmPendingAction(session.id, options);
     }
 
     if (hydratedPlan.intent === "cancel_action") {
@@ -227,11 +237,12 @@ export class AgentRuntime {
       };
     }
 
-    return this.executePlannedAction(session.id, hydratedPlan);
+    return this.executePlannedAction(session.id, hydratedPlan, options);
   }
 
   public async executeTool(
     request: ExecuteToolRequest,
+    options: AgentRuntimeExecutionOptions = {},
   ): Promise<AgentResponse> {
     const session = this.sessions.getOrCreate(request.sessionId);
 
@@ -310,6 +321,7 @@ export class AgentRuntime {
           broadcastActivity,
           broadcastResult,
           preparedTransaction,
+          options.onProgress,
         );
 
         if (receipt) {
@@ -369,6 +381,7 @@ export class AgentRuntime {
   private async executePlannedAction(
     sessionId: string,
     plan: PlannerAction,
+    options: AgentRuntimeExecutionOptions,
   ): Promise<AgentResponse> {
     if (!plan.tool) {
       return {
@@ -403,15 +416,19 @@ export class AgentRuntime {
       executionPolicy: plan.executionPolicy,
     });
 
-    return this.executeTool({
-      tool: plan.tool,
-      arguments: plannedArguments,
-      sessionId,
-    });
+    return this.executeTool(
+      {
+        tool: plan.tool,
+        arguments: plannedArguments,
+        sessionId,
+      },
+      options,
+    );
   }
 
   private async confirmPendingAction(
     sessionId: string,
+    options: AgentRuntimeExecutionOptions,
   ): Promise<AgentResponse> {
     const session = this.sessions.getOrCreate(sessionId);
     const pendingAction = session.pendingAction;
@@ -420,12 +437,15 @@ export class AgentRuntime {
       throw new ValidationError("There is no pending action to confirm.");
     }
 
-    const response = await this.executeTool({
-      tool: pendingAction.tool,
-      arguments: pendingAction.arguments,
-      sessionId,
-      confirm: true,
-    });
+    const response = await this.executeTool(
+      {
+        tool: pendingAction.tool,
+        arguments: pendingAction.arguments,
+        sessionId,
+        confirm: true,
+      },
+      options,
+    );
 
     this.sessions.clearPendingAction(sessionId);
 
@@ -841,13 +861,18 @@ export class AgentRuntime {
     activity: BroadcastActivity,
     broadcast: BroadcastResult | undefined,
     prepared?: PreparedTransaction,
+    onProgress?: (update: AgentProgressUpdate) => void,
   ): Promise<BroadcastReceipt | undefined> {
     if (!broadcast) {
       return undefined;
     }
 
     try {
-      const status = await this.pollTransactionStatus(broadcast);
+      const status = await this.pollTransactionStatus(
+        tool,
+        broadcast,
+        onProgress,
+      );
       const postTransactionBalances = await this.loadPostTransactionBalances(
         broadcast,
         status,
@@ -876,18 +901,29 @@ export class AgentRuntime {
   }
 
   private async pollTransactionStatus(
+    tool: ToolName,
     broadcast: BroadcastResult,
+    onProgress?: (update: AgentProgressUpdate) => void,
   ): Promise<TransactionStatus> {
     const startedAt = Date.now();
     let latestStatus = await this.neo.getTransactionStatus({
       hash: broadcast.txHash,
       network: broadcast.network,
     });
+    let waitingLabelEmitted = false;
 
     while (
       this.shouldKeepPollingTransactionStatus(latestStatus.status) &&
       Date.now() - startedAt < this.transactionPollingTimeoutMs
     ) {
+      if (!waitingLabelEmitted && onProgress) {
+        onProgress({
+          phase: "waiting_for_confirmation",
+          label: this.buildConfirmationProgressLabel(tool),
+        });
+        waitingLabelEmitted = true;
+      }
+
       await this.sleep(this.transactionPollingIntervalMs);
       latestStatus = await this.neo.getTransactionStatus({
         hash: broadcast.txHash,
@@ -1010,6 +1046,18 @@ export class AgentRuntime {
     }
 
     return receipt;
+  }
+
+  private buildConfirmationProgressLabel(tool: ToolName): string {
+    switch (tool) {
+      case "swapNeoN3Token":
+        return "Swap submitted. Tracking on-chain confirmation...";
+      case "sendNeoN3Gas":
+      case "sendNeoN3Token":
+        return "Transfer submitted. Tracking on-chain confirmation...";
+      default:
+        return "Transaction submitted. Tracking on-chain confirmation...";
+    }
   }
 
   private buildPostTransactionBalancesLine(
