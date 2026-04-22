@@ -40,7 +40,7 @@ function createConfig(n3WalletPrivateKey: string): AppConfig {
       tokenMap: {},
       flamingoPairs: [],
     },
-    openAiModel: "gpt-4.1-mini",
+    openAiModel: "gpt-5-mini",
     geminiModel: "gemini-2.5-flash",
     walletEnabled: true,
     llmEnabled: false,

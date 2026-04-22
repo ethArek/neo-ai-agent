@@ -29,7 +29,7 @@ function createConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     },
     llmProvider: undefined,
     openAiApiKey: undefined,
-    openAiModel: "gpt-4.1-mini",
+    openAiModel: "gpt-5-mini",
     geminiApiKey: undefined,
     geminiModel: "gemini-2.5-flash",
     walletEnabled: false,

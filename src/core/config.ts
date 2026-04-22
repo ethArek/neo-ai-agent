@@ -265,7 +265,7 @@ const envSchema = z.object({
   NEO_N3_NETWORK: z.enum(["mainnet", "testnet"]).default("mainnet"),
   LLM_PROVIDER: z.enum(["openai", "gemini"]).optional(),
   OPENAI_API_KEY: optionalNonEmptyString,
-  OPENAI_MODEL: z.string().default("gpt-4.1-mini"),
+  OPENAI_MODEL: z.string().default("gpt-5-mini"),
   GEMINI_API_KEY: optionalNonEmptyString,
   GEMINI_MODEL: z.string().default("gemini-2.5-flash"),
   WALLET_WIF: optionalNonEmptyString,
