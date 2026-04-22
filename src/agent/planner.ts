@@ -1,8 +1,14 @@
 import { z } from "zod";
 
+import {
+  extractNeoN3AddressOrName,
+  isNeoN3AddressReference,
+  resolveAddressReference,
+} from "../core/addressResolver";
+import { formatNetworkLabel } from "../core/formatting";
 import { LlmPlanningError } from "../core/errors";
 import { logger } from "../core/logger";
-import { hash256Schema, isNeoN3Address } from "../core/validation";
+import { hash256Schema } from "../core/validation";
 import type { LlmProvider } from "../llm/provider";
 import type { NeoNetwork } from "../neo/types";
 import type {
@@ -22,8 +28,6 @@ const plannerResponseSchema = z.object({
 });
 
 const contractHashPattern = /\b(0x[a-fA-F0-9]{40})\b/;
-const neoNsPattern =
-  /\b([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*\.neo)\b/i;
 
 interface PlannerServiceOptions {
   tools: PlannerToolDescriptor[];
@@ -103,13 +107,10 @@ export class PlannerService {
     const lowerMessage = trimmedMessage.toLowerCase();
     const requestedNetwork = this.detectRequestedNetwork(lowerMessage);
     const neoN3WalletAddress = this.getWalletAddress(context, "neoN3");
-    const resolvedAddress = this.resolveAddressReference(
-      trimmedMessage,
-      context,
-    );
+    const resolvedAddress = resolveAddressReference(trimmedMessage, context);
     const neoN3Recipient =
-      this.extractNeoN3AddressOrName(trimmedMessage) ??
-      (resolvedAddress && this.isNeoN3AddressReference(resolvedAddress)
+      extractNeoN3AddressOrName(trimmedMessage) ??
+      (resolvedAddress && isNeoN3AddressReference(resolvedAddress)
         ? resolvedAddress
         : undefined);
     const isSwapMessage =
@@ -517,7 +518,7 @@ export class PlannerService {
         needsConfirmation: false,
         missingInputs: [],
         explanation: requestedNetwork
-          ? `Detected a ${this.formatNetworkLabel(requestedNetwork)} wallet address request.`
+          ? `Detected a ${formatNetworkLabel(requestedNetwork)} wallet address request.`
           : "Detected a wallet address request.",
       };
     }
@@ -559,7 +560,7 @@ export class PlannerService {
       },
       needsConfirmation: false,
       missingInputs: [],
-      explanation: `${this.formatNetworkLabel(network)} support is planned but not implemented yet in this agent.`,
+      explanation: `${formatNetworkLabel(network)} support is planned but not implemented yet in this agent.`,
     };
   }
 
@@ -590,63 +591,6 @@ export class PlannerService {
     context: PlannerContext,
   ): boolean {
     return context.implementedNetworks.includes(network);
-  }
-
-  private formatNetworkLabel(network: NeoNetwork): string {
-    return network === "neoX" ? "Neo X" : "Neo N3";
-  }
-
-  private resolveAddressReference(
-    message: string,
-    context: PlannerContext,
-  ): string | undefined {
-    const explicitAddress = this.extractNeoN3AddressOrName(message);
-
-    if (explicitAddress) {
-      return explicitAddress;
-    }
-
-    const normalizedMessage = message.toLowerCase();
-
-    if (this.referencesWalletAddress(normalizedMessage)) {
-      return context.walletAddress ?? context.lastReferencedAddress;
-    }
-
-    if (this.referencesLastKnownAddress(normalizedMessage)) {
-      return context.lastReferencedAddress ?? context.walletAddress;
-    }
-
-    return undefined;
-  }
-
-  private referencesWalletAddress(message: string): boolean {
-    return /\bmy (?:address|wallet|account|wallet address)\b/.test(message);
-  }
-
-  private referencesLastKnownAddress(message: string): boolean {
-    return /\b(?:this|that|same) (?:address|wallet|account)\b/.test(message);
-  }
-
-  private extractNeoN3AddressOrName(message: string): string | undefined {
-    const parts = message.match(/[A-Za-z0-9]+/g) ?? [];
-
-    for (const part of parts) {
-      if (isNeoN3Address(part)) {
-        return part;
-      }
-    }
-
-    const neoNsMatch = message.match(neoNsPattern);
-
-    if (neoNsMatch) {
-      return neoNsMatch[1].toLowerCase();
-    }
-
-    return undefined;
-  }
-
-  private isNeoN3AddressReference(address: string): boolean {
-    return isNeoN3Address(address) || neoNsPattern.test(address);
   }
 
   private extractSwapParameters(message: string): {

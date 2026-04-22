@@ -1,7 +1,12 @@
 import { randomUUID } from "node:crypto";
 
+import {
+  extractNeoN3AddressOrName,
+  isNeoN3AddressReference,
+  resolveAddressReference,
+  resolveSessionAddressReference,
+} from "../core/addressResolver";
 import { ValidationError } from "../core/errors";
-import { isNeoN3Address } from "../core/validation";
 import type { BroadcastResult, NeoNetwork } from "../neo/types";
 import type { NeoProvider } from "../neo/types";
 import type { PlannerService } from "./planner";
@@ -15,9 +20,6 @@ import type {
   PlannerAction,
   ToolName,
 } from "./types";
-
-const neoNsPattern =
-  /\b([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*\.neo)\b/i;
 
 interface AgentRuntimeOptions {
   planner: PlannerService;
@@ -398,8 +400,8 @@ export class AgentRuntime {
     const toTokenMatch = message.match(
       /\b(?:for|to)\s+([A-Za-z][A-Za-z0-9._:-]*)\b/i,
     );
-    const resolvedAddress = this.resolveAddressReference(message, session);
-    const neoN3Recipient = this.extractNeoN3AddressOrName(message);
+    const resolvedAddress = resolveAddressReference(message, session);
+    const neoN3Recipient = extractNeoN3AddressOrName(message);
 
     for (const inputName of draftAction.missingInputs) {
       if (inputName === "amount" && amountMatch) {
@@ -478,38 +480,6 @@ export class AgentRuntime {
     };
   }
 
-  private resolveAddressReference(
-    message: string,
-    session: {
-      walletAddress?: string;
-      lastReferencedAddress?: string;
-    },
-  ): string | undefined {
-    const explicitAddress = this.extractNeoN3AddressOrName(message);
-
-    if (explicitAddress) {
-      return explicitAddress;
-    }
-
-    const normalizedMessage = message.trim().toLowerCase();
-
-    if (
-      /\bmy (?:address|wallet|account|wallet address)\b/.test(normalizedMessage)
-    ) {
-      return session.walletAddress ?? session.lastReferencedAddress;
-    }
-
-    if (
-      /\b(?:this|that|same) (?:address|wallet|account)\b/.test(
-        normalizedMessage,
-      )
-    ) {
-      return session.lastReferencedAddress ?? session.walletAddress;
-    }
-
-    return undefined;
-  }
-
   private extractSingleToken(message: string): string | undefined {
     const tokenMatches = message.match(/[A-Za-z][A-Za-z0-9._:-]*/g);
 
@@ -518,24 +488,6 @@ export class AgentRuntime {
     }
 
     return tokenMatches[0];
-  }
-
-  private extractNeoN3AddressOrName(message: string): string | undefined {
-    const parts = message.match(/[A-Za-z0-9]+/g) ?? [];
-
-    for (const part of parts) {
-      if (isNeoN3Address(part)) {
-        return part;
-      }
-    }
-
-    const neoNsMatch = message.match(neoNsPattern);
-
-    if (neoNsMatch) {
-      return neoNsMatch[1].toLowerCase();
-    }
-
-    return undefined;
   }
 
   private acceptsNeoN3Recipient(tool: ToolName): boolean {
@@ -562,10 +514,7 @@ export class AgentRuntime {
       return plan;
     }
 
-    const resolvedAddress = this.resolveSessionAddressReference(
-      message,
-      session,
-    );
+    const resolvedAddress = resolveSessionAddressReference(message, session);
 
     if (!resolvedAddress) {
       return plan;
@@ -579,32 +528,6 @@ export class AgentRuntime {
       },
       missingInputs: plan.missingInputs.filter((input) => input !== "address"),
     };
-  }
-
-  private resolveSessionAddressReference(
-    message: string,
-    session: {
-      walletAddress?: string;
-      lastReferencedAddress?: string;
-    },
-  ): string | undefined {
-    const normalizedMessage = message.trim().toLowerCase();
-
-    if (
-      /\bmy (?:address|wallet|account|wallet address)\b/.test(normalizedMessage)
-    ) {
-      return session.walletAddress ?? session.lastReferencedAddress;
-    }
-
-    if (
-      /\b(?:this|that|same) (?:address|wallet|account)\b/.test(
-        normalizedMessage,
-      )
-    ) {
-      return session.lastReferencedAddress ?? session.walletAddress;
-    }
-
-    return undefined;
   }
 
   private toolSupportsImplicitAddress(tool: ToolName): boolean {

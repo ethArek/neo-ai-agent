@@ -1,8 +1,11 @@
 import { z } from "zod";
 
-import type { ToolDefinition } from "../agent/types";
+import type {
+  BroadcastActivity,
+  ToolDefinition,
+  ToolExecutionResult,
+} from "../agent/types";
 import { ValidationError } from "../core/errors";
-import type { BroadcastActivity, ToolExecutionResult } from "../agent/types";
 import type { TransactionStatus } from "../neo/types";
 
 const inputSchema = z.object({});

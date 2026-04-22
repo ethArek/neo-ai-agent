@@ -1,4 +1,5 @@
-import { neoNetworks, type NeoNetwork } from "../neo/types";
+import { formatNetworkLabel } from "../core/formatting";
+import { neoNetworks } from "../neo/types";
 import type { PlannerContext, PlannerToolDescriptor } from "./types";
 
 export function buildPlannerSystemPrompt(
@@ -93,8 +94,4 @@ ${referencedAddressLine}
 
 Available tools:
 ${toolLines}`;
-}
-
-function formatNetworkLabel(network: NeoNetwork): string {
-  return network === "neoX" ? "Neo X" : "Neo N3";
 }
