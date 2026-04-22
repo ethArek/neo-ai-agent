@@ -1,7 +1,7 @@
 import {
-  CONST as neoConst,
-  api as neoApi,
   experimental,
+  api as neoApi,
+  CONST as neoConst,
   rpc as neoRpc,
   sc as neoSc,
   tx as neoTx,
@@ -9,12 +9,12 @@ import {
 } from "@cityofzion/neon-js";
 
 import {
-  defaultNeoN3FlamingoContractsByNetwork,
   type AppConfig,
+  defaultNeoN3FlamingoContractsByNetwork,
 } from "../core/config";
 import {
-  NotFoundError,
   NeoRpcError,
+  NotFoundError,
   ProviderCapabilityError,
   ValidationError,
   WalletUnavailableError,
@@ -30,7 +30,6 @@ import { createBroadcastResult } from "./broadcast";
 import type {
   BlockReference,
   BroadcastResult,
-  NeoNetwork,
   NeoN3ContractWriteInput,
   NeoN3PortfolioOverview,
   NeoN3ReadInvocationResult,
@@ -39,9 +38,11 @@ import type {
   NeoN3TokenSwapInput,
   NeoN3TokenTransferInput,
   NeoN3TransferHistory,
+  NeoNetwork,
   NeoProvider,
   NetworkAddressMap,
   PreparedTransaction,
+  ProviderReadiness,
   TokenBalance,
   TokenMetadata,
   TransactionDetails,
@@ -212,7 +213,6 @@ export class NeoN3Provider implements NeoProvider {
   >;
   private neoN3ResolvedFlamingoBrokerContractPromise?: Promise<string>;
   private neoN3ResolvedFlamingoConvertContractPromise?: Promise<string>;
-  private neoN3ResolvedFlamingoRouterContractPromise?: Promise<string>;
 
   public constructor(config: AppConfig) {
     this.config = config;
@@ -928,6 +928,25 @@ export class NeoN3Provider implements NeoProvider {
     }
 
     return network === "neoN3" ? Boolean(this.neoN3Wallet) : false;
+  }
+
+  public async checkReadiness(): Promise<ProviderReadiness> {
+    const networkMagic = await this.getNeoN3NetworkMagic();
+    const expectedMagic =
+      this.config.neoN3.network === "testnet"
+        ? neoN3TestnetNetworkMagic
+        : neoN3MainnetNetworkMagic;
+
+    return {
+      network: "neoN3",
+      configuredNetwork: this.config.neoN3.network,
+      rpcUrl: this.config.neoN3.rpcUrl,
+      rpcReachable: true,
+      networkMagic,
+      networkMatchesConfiguration: networkMagic === expectedMagic,
+      walletEnabled: this.walletEnabled("neoN3"),
+      walletAddress: this.neoN3Wallet?.address,
+    };
   }
 
   private buildNeoN3PreparedTransaction(
@@ -1851,28 +1870,6 @@ export class NeoN3Provider implements NeoProvider {
     }
 
     return nnsContractAddress;
-  }
-
-  private async resolveNeoN3FlamingoRouterContractAddress(): Promise<string> {
-    return this.getOrCreateCachedPromise(
-      () => this.neoN3ResolvedFlamingoRouterContractPromise,
-      (promise) => {
-        this.neoN3ResolvedFlamingoRouterContractPromise = promise;
-      },
-      () => {
-        return this.resolveNeoN3FlamingoContractAddress({
-          configuredAddress: this.config.neoN3.flamingoRouterContract,
-          operationNames: ["getAmountsOut", "getBrokerContract"],
-          environmentVariableName: "NEO_N3_FLAMINGO_ROUTER_CONTRACT",
-          defaultByNetworkMagic: {
-            [neoN3MainnetNetworkMagic]:
-              defaultNeoN3FlamingoContractsByNetwork.mainnet.router,
-            [neoN3TestnetNetworkMagic]:
-              defaultNeoN3FlamingoContractsByNetwork.testnet.router,
-          },
-        });
-      },
-    );
   }
 
   private async resolveNeoN3FlamingoBrokerContractAddress(): Promise<string> {

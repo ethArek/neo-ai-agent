@@ -196,6 +196,106 @@ export function buildOpenApiDocument(
             },
           },
         },
+        ReadinessResponse: {
+          type: "object",
+          required: ["status", "neo", "sessions", "toolCount"],
+          properties: {
+            status: {
+              type: "string",
+              enum: ["ready"],
+            },
+            neo: {
+              type: "object",
+              required: [
+                "network",
+                "configuredNetwork",
+                "rpcUrl",
+                "rpcReachable",
+                "networkMatchesConfiguration",
+                "walletEnabled",
+              ],
+              properties: {
+                network: {
+                  type: "string",
+                },
+                configuredNetwork: {
+                  type: "string",
+                },
+                rpcUrl: {
+                  type: "string",
+                },
+                rpcReachable: {
+                  type: "boolean",
+                },
+                networkMagic: {
+                  type: "integer",
+                  nullable: true,
+                },
+                networkMatchesConfiguration: {
+                  type: "boolean",
+                },
+                walletEnabled: {
+                  type: "boolean",
+                },
+                walletAddress: {
+                  type: "string",
+                  nullable: true,
+                },
+              },
+            },
+            sessions: {
+              type: "object",
+              required: [
+                "activeSessions",
+                "pendingActions",
+                "draftActions",
+                "recentBroadcasts",
+                "maxAgeMs",
+              ],
+              properties: {
+                activeSessions: {
+                  type: "integer",
+                },
+                pendingActions: {
+                  type: "integer",
+                },
+                draftActions: {
+                  type: "integer",
+                },
+                recentBroadcasts: {
+                  type: "integer",
+                },
+                maxAgeMs: {
+                  type: "integer",
+                },
+              },
+            },
+            toolCount: {
+              type: "integer",
+            },
+          },
+        },
+        MetricsResponse: {
+          type: "object",
+          required: ["generatedAt", "api", "agent", "runtime"],
+          properties: {
+            generatedAt: {
+              type: "string",
+            },
+            api: {
+              type: "object",
+              additionalProperties: true,
+            },
+            agent: {
+              type: "object",
+              additionalProperties: true,
+            },
+            runtime: {
+              type: "object",
+              additionalProperties: true,
+            },
+          },
+        },
         ToolsResponse: {
           type: "object",
           required: ["tools"],
@@ -220,7 +320,9 @@ export function buildOpenApiDocument(
         get: {
           tags: ["Experimental"],
           summary: "Health check",
-          description: "Returns a simple health payload for the REST API.",
+          description:
+            "Returns a public liveness payload for the REST API process.",
+          security: [],
           responses: {
             "200": {
               description: "API is healthy.",
@@ -232,12 +334,54 @@ export function buildOpenApiDocument(
                 },
               },
             },
-            "401": {
-              description: "Bearer token is missing or invalid.",
+          },
+        },
+      },
+      "/ready": {
+        get: {
+          tags: ["Experimental"],
+          summary: "Readiness check",
+          description:
+            "Returns a public readiness payload that validates Neo RPC connectivity and basic runtime state.",
+          security: [],
+          responses: {
+            "200": {
+              description: "API is ready to serve requests.",
+              content: {
+                "application/json": {
+                  schema: {
+                    $ref: "#/components/schemas/ReadinessResponse",
+                  },
+                },
+              },
+            },
+            "503": {
+              description: "API is not ready.",
               content: {
                 "application/json": {
                   schema: {
                     $ref: "#/components/schemas/ErrorResponse",
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      "/metrics": {
+        get: {
+          tags: ["Experimental"],
+          summary: "Operational metrics",
+          description:
+            "Returns an in-memory operational snapshot for request handling, tool execution, and transaction lifecycle telemetry.",
+          security: [],
+          responses: {
+            "200": {
+              description: "Operational metrics snapshot.",
+              content: {
+                "application/json": {
+                  schema: {
+                    $ref: "#/components/schemas/MetricsResponse",
                   },
                 },
               },

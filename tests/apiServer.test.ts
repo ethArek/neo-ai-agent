@@ -77,6 +77,7 @@ describe("REST API server", () => {
       };
 
       expect(response.status).toBe(200);
+      expect(response.headers.get("x-request-id")).toBeTruthy();
       expect(payload.tools.some((tool) => tool.name === "sendNeoN3Gas")).toBe(
         true,
       );
@@ -234,7 +235,7 @@ describe("REST API server", () => {
     const setup = await createTestServer();
 
     try {
-      const response = await fetch(`${setup.baseUrl}/health`);
+      const response = await fetch(`${setup.baseUrl}/api/tools`);
       const payload = (await response.json()) as {
         error: {
           code: string;
@@ -243,6 +244,141 @@ describe("REST API server", () => {
 
       expect(response.status).toBe(401);
       expect(payload.error.code).toBe("UNAUTHORIZED");
+    } finally {
+      await closeServer(setup.server);
+    }
+  });
+
+  it("serves public health, readiness, and metrics endpoints", async () => {
+    const setup = await createTestServer();
+
+    try {
+      const healthResponse = await fetch(`${setup.baseUrl}/health`);
+      const healthPayload = (await healthResponse.json()) as {
+        status: string;
+      };
+      const readyResponse = await fetch(`${setup.baseUrl}/ready`);
+      const readyPayload = (await readyResponse.json()) as {
+        status: string;
+        neo: {
+          rpcReachable: boolean;
+          networkMatchesConfiguration: boolean;
+        };
+      };
+      const metricsResponse = await fetch(`${setup.baseUrl}/metrics`);
+      const metricsPayload = (await metricsResponse.json()) as {
+        api: {
+          total: number;
+        };
+        agent: {
+          transactionsPreparedTotal: number;
+          transactionsSubmittedTotal: number;
+        };
+      };
+
+      expect(healthResponse.status).toBe(200);
+      expect(healthResponse.headers.get("x-request-id")).toBeTruthy();
+      expect(healthPayload.status).toBe("ok");
+      expect(readyResponse.status).toBe(200);
+      expect(readyPayload.status).toBe("ready");
+      expect(readyPayload.neo.rpcReachable).toBe(true);
+      expect(readyPayload.neo.networkMatchesConfiguration).toBe(true);
+      expect(metricsResponse.status).toBe(200);
+      expect(metricsPayload.api.total).toBeGreaterThanOrEqual(2);
+      expect(
+        metricsPayload.agent.transactionsPreparedTotal,
+      ).toBeGreaterThanOrEqual(0);
+      expect(
+        metricsPayload.agent.transactionsSubmittedTotal,
+      ).toBeGreaterThanOrEqual(0);
+    } finally {
+      await closeServer(setup.server);
+    }
+  });
+
+  it("reports readiness failures when the Neo RPC network does not match configuration", async () => {
+    const setup = await createTestServer();
+    const readinessSpy = jest.spyOn(setup.provider, "checkReadiness");
+
+    readinessSpy.mockResolvedValueOnce({
+      network: "neoN3",
+      configuredNetwork: "mainnet",
+      rpcUrl: "https://n3.example.com",
+      rpcReachable: true,
+      networkMagic: 894_710_606,
+      networkMatchesConfiguration: false,
+      walletEnabled: true,
+      walletAddress: setup.provider.neoN3Address,
+    });
+
+    try {
+      const response = await fetch(`${setup.baseUrl}/ready`);
+      const payload = (await response.json()) as {
+        error: {
+          code: string;
+        };
+      };
+
+      expect(response.status).toBe(503);
+      expect(response.headers.get("x-request-id")).toBeTruthy();
+      expect(payload.error.code).toBe("NOT_READY");
+    } finally {
+      await closeServer(setup.server);
+    }
+  });
+
+  it("tracks transaction lifecycle telemetry for prepared and submitted actions", async () => {
+    const setup = await createTestServer();
+
+    try {
+      const prepareResponse = await fetch(
+        `${setup.baseUrl}/api/tools/sendNeoN3Gas`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: "Bearer test-token",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            arguments: {
+              amount: "0.1",
+              to: setup.provider.neoNsName,
+            },
+          }),
+        },
+      );
+      const preparedPayload = (await prepareResponse.json()) as {
+        sessionId: string;
+      };
+
+      await fetch(
+        `${setup.baseUrl}/api/sessions/${preparedPayload.sessionId}/confirm`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: "Bearer test-token",
+          },
+        },
+      );
+
+      const metricsResponse = await fetch(`${setup.baseUrl}/metrics`);
+      const metricsPayload = (await metricsResponse.json()) as {
+        agent: {
+          transactionsPreparedTotal: number;
+          transactionsSubmittedTotal: number;
+          transactionsByTool: Record<string, number>;
+        };
+      };
+
+      expect(
+        metricsPayload.agent.transactionsPreparedTotal,
+      ).toBeGreaterThanOrEqual(1);
+      expect(
+        metricsPayload.agent.transactionsSubmittedTotal,
+      ).toBeGreaterThanOrEqual(1);
+      expect(
+        metricsPayload.agent.transactionsByTool.sendNeoN3Gas,
+      ).toBeGreaterThanOrEqual(2);
     } finally {
       await closeServer(setup.server);
     }

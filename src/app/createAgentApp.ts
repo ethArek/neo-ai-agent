@@ -1,8 +1,8 @@
-import type { AppConfig } from "../core/config";
 import { PlannerService } from "../agent/planner";
 import { AgentRuntime } from "../agent/runtime";
 import { SessionStore } from "../agent/sessionStore";
 import { ToolRegistry } from "../agent/toolRegistry";
+import type { AppConfig } from "../core/config";
 import { createLlmProvider } from "../llm/createProvider";
 import { createNeoProvider } from "../neo/client";
 

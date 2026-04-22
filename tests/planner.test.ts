@@ -1,6 +1,7 @@
 import { PlannerService } from "../src/agent/planner";
-import type { PlannerContext } from "../src/agent/types";
 import { ToolRegistry } from "../src/agent/toolRegistry";
+import type { PlannerContext } from "../src/agent/types";
+import type { LlmProvider } from "../src/llm/provider";
 
 const neoN3Address = "NQ9NEvVrutLL6JDtUMKMrkEG6QpWNxgNBM";
 const neoNsName = "arkadiusz.neo";
@@ -8,6 +9,13 @@ const neoNsName = "arkadiusz.neo";
 function createPlanner(): PlannerService {
   return new PlannerService({
     tools: new ToolRegistry().listPlannerTools(),
+  });
+}
+
+function createPlannerWithProvider(provider: LlmProvider): PlannerService {
+  return new PlannerService({
+    tools: new ToolRegistry().listPlannerTools(),
+    provider,
   });
 }
 
@@ -226,5 +234,72 @@ describe("PlannerService", () => {
     expect(plan.tool).toBeNull();
     expect(plan.intent).toBe("unsupported_network");
     expect(plan.explanation).toContain("Neo X support is planned");
+  });
+
+  it("ignores provider confirmation intents unless the raw user message is an explicit confirm phrase", async () => {
+    const provider: LlmProvider = {
+      async plan() {
+        return JSON.stringify({
+          intent: "confirm_action",
+          tool: null,
+          arguments: {},
+          needsConfirmation: false,
+          missingInputs: [],
+        });
+      },
+    };
+    const plan = await createPlannerWithProvider(provider).plan(
+      "show my portfolio",
+      createContext({
+        walletEnabled: true,
+        walletAddress: neoN3Address,
+        walletAddresses: {
+          neoN3: neoN3Address,
+        },
+      }),
+    );
+
+    expect(plan.tool).toBe("getNeoN3PortfolioOverview");
+    expect(plan.intent).toBe("get_neo_n3_portfolio_overview");
+  });
+
+  it("accepts provider confirmation intents for explicit confirm phrases", async () => {
+    const provider: LlmProvider = {
+      async plan() {
+        return JSON.stringify({
+          intent: "confirm_action",
+          tool: null,
+          arguments: {},
+          needsConfirmation: false,
+          missingInputs: [],
+        });
+      },
+    };
+    const plan = await createPlannerWithProvider(provider).plan(
+      "Confirm",
+      createContext({
+        walletEnabled: true,
+      }),
+    );
+
+    expect(plan.intent).toBe("confirm_action");
+    expect(plan.tool).toBeNull();
+  });
+
+  it("falls back to heuristics when the provider returns malformed JSON", async () => {
+    const provider: LlmProvider = {
+      async plan() {
+        return "not-json";
+      },
+    };
+    const plan = await createPlannerWithProvider(provider).plan(
+      "show my address",
+      createContext({
+        walletEnabled: true,
+      }),
+    );
+
+    expect(plan.tool).toBe("getWalletAddress");
+    expect(plan.intent).toBe("get_wallet_address");
   });
 });

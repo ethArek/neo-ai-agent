@@ -1,17 +1,19 @@
 import {
   experimental,
+  CONST as neoConst,
   rpc as neoRpc,
   wallet as neoWallet,
 } from "@cityofzion/neon-js";
 
 import {
-  defaultNeoN3FlamingoContractsByNetwork,
   type AppConfig,
+  defaultNeoN3FlamingoContractsByNetwork,
 } from "../src/core/config";
 import { createNeoProvider, NeoN3Provider } from "../src/neo/client";
 
 const neoN3MainnetNnsContract = "0x50ac1c37690cc2cfc594472833cf57505d5f46de";
 const neoN3GasTokenContract = "0xd2a4cff31913016155e38e474a2c06d08be276cf";
+const neoN3NeoTokenContract = `0x${neoConst.NATIVE_CONTRACT_HASH.NeoToken}`;
 const bNeoMainnetContract = "0x48c40d4666f93408be1bef038b6722404d9a4c2a";
 
 function createConfig(n3WalletPrivateKey: string): AppConfig {
@@ -473,6 +475,96 @@ describe("NeoProvider", () => {
     expect(getVersionSpy).toHaveBeenCalledTimes(2);
   });
 
+  it("returns non-zero NEP-17 balances from the TokenTracker RPC plugin", async () => {
+    const account = new neoWallet.Account();
+    const provider = createNeoProvider(createConfig(account.WIF));
+
+    jest
+      .spyOn(neoRpc.RPCClient.prototype, "getNep17Balances")
+      .mockResolvedValue({
+        address: account.address,
+        balance: [
+          {
+            assethash: bNeoMainnetContract,
+            amount: "1.5",
+            lastupdatedblock: 1,
+          },
+          {
+            assethash: "0x833b3d6854d5bc44cab40ab9b46560d25c72562c",
+            amount: "0",
+            lastupdatedblock: 1,
+          },
+        ],
+      });
+
+    await expect(
+      provider.getNeoN3TokenBalances(account.address),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        contractAddress: bNeoMainnetContract,
+        symbol: "bNEO",
+        balance: "1.5",
+        rawBalance: "150000000",
+      }),
+    ]);
+  });
+
+  it("falls back to the portfolio overview when the TokenTracker RPC plugin is unavailable", async () => {
+    const account = new neoWallet.Account();
+    const provider = createNeoProvider(createConfig(account.WIF));
+    const portfolioSpy = jest
+      .spyOn(provider, "getNeoN3PortfolioOverview")
+      .mockResolvedValue({
+        address: account.address,
+        gasBalance: {
+          contractAddress: neoN3GasTokenContract,
+          symbol: "GAS",
+          decimals: 8,
+          owner: account.address,
+          rawBalance: "100000000",
+          balance: "1",
+        },
+        neoBalance: {
+          contractAddress: neoN3NeoTokenContract,
+          symbol: "NEO",
+          decimals: 0,
+          owner: account.address,
+          rawBalance: "0",
+          balance: "0",
+        },
+        tokenBalances: [
+          {
+            contractAddress: bNeoMainnetContract,
+            symbol: "bNEO",
+            decimals: 8,
+            owner: account.address,
+            rawBalance: "200000000",
+            balance: "2",
+          },
+        ],
+      });
+
+    jest
+      .spyOn(neoRpc.RPCClient.prototype, "getNep17Balances")
+      .mockRejectedValue(new Error("TokenTracker unavailable"));
+
+    await expect(
+      provider.getNeoN3TokenBalances(account.address),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        contractAddress: neoN3GasTokenContract,
+        symbol: "GAS",
+        balance: "1",
+      }),
+      expect.objectContaining({
+        contractAddress: bNeoMainnetContract,
+        symbol: "bNEO",
+        balance: "2",
+      }),
+    ]);
+    expect(portfolioSpy).toHaveBeenCalledWith(account.address);
+  });
+
   it("retries Flamingo broker contract resolution after a failed cached attempt", async () => {
     const account = new neoWallet.Account();
     const provider = new SwapQuoteTestNeoProvider(createConfig(account.WIF));
@@ -555,5 +647,138 @@ describe("NeoProvider", () => {
     );
     expect(provider.normalizeSwapSlippagePercentForTest("0.01")).toBe("0.01");
     expect(provider.toBasisPointsForTest("0.01")).toBe(1);
+  });
+
+  it("returns not_found transaction status when the transaction is missing", async () => {
+    const account = new neoWallet.Account();
+    const provider = createNeoProvider(createConfig(account.WIF));
+    const hash =
+      "0x1111111111111111111111111111111111111111111111111111111111111111";
+
+    jest
+      .spyOn(neoRpc.RPCClient.prototype, "getRawTransaction")
+      .mockRejectedValue(new Error("Missing transaction"));
+
+    await expect(
+      provider.getTransactionStatus({
+        hash,
+        network: "neoN3",
+      }),
+    ).resolves.toMatchObject({
+      hash,
+      network: "neoN3",
+      status: "not_found",
+      transaction: null,
+      applicationLog: null,
+    });
+  });
+
+  it("returns confirmed transaction status when the application log halts successfully", async () => {
+    const account = new neoWallet.Account();
+    const provider = createNeoProvider(createConfig(account.WIF));
+    const hash =
+      "0x2222222222222222222222222222222222222222222222222222222222222222";
+    const rawTransaction = {
+      hash,
+      blockhash:
+        "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      confirmations: 1,
+      blocktime: 1_700_000_000_000,
+      vm_state: "HALT" as const,
+      size: 1,
+      version: 0,
+      nonce: 1,
+      sender: account.address,
+      sysfee: "0",
+      netfee: "0",
+      validuntilblock: 42,
+      signers: [],
+      attributes: [],
+      script: "00",
+      witnesses: [],
+    };
+
+    Object.defineProperty(rawTransaction, "blockindex", {
+      value: "42",
+      enumerable: true,
+    });
+
+    jest
+      .spyOn(neoRpc.RPCClient.prototype, "getRawTransaction")
+      .mockResolvedValue(rawTransaction);
+    jest
+      .spyOn(neoRpc.RPCClient.prototype, "getApplicationLog")
+      .mockResolvedValue({
+        txid: hash,
+        executions: [
+          {
+            trigger: "Application",
+            vmstate: "HALT",
+            gasconsumed: "0.1",
+            stack: [],
+            notifications: [],
+          },
+        ],
+      });
+
+    await expect(
+      provider.getTransactionStatus({
+        hash,
+        network: "neoN3",
+      }),
+    ).resolves.toMatchObject({
+      hash,
+      network: "neoN3",
+      status: "confirmed",
+      blockNumber: 42,
+      summary: `Neo N3 transaction ${hash} is confirmed.`,
+    });
+  });
+
+  it("reports Neo N3 readiness for the configured mainnet", async () => {
+    const account = new neoWallet.Account();
+    const provider = createNeoProvider(createConfig(account.WIF));
+
+    jest
+      .spyOn(neoRpc.RPCClient.prototype, "getVersion")
+      .mockResolvedValue(createVersionResponse(860_833_102));
+
+    await expect(provider.checkReadiness()).resolves.toMatchObject({
+      network: "neoN3",
+      configuredNetwork: "mainnet",
+      rpcReachable: true,
+      networkMagic: 860_833_102,
+      networkMatchesConfiguration: true,
+      walletEnabled: true,
+      walletAddress: account.address,
+    });
+  });
+
+  it("marks readiness as degraded when the RPC network magic mismatches the configured network", async () => {
+    const account = new neoWallet.Account();
+    const provider = createNeoProvider(createConfig(account.WIF));
+
+    jest
+      .spyOn(neoRpc.RPCClient.prototype, "getVersion")
+      .mockResolvedValue(createVersionResponse(894_710_606));
+
+    await expect(provider.checkReadiness()).resolves.toMatchObject({
+      configuredNetwork: "mainnet",
+      networkMagic: 894_710_606,
+      networkMatchesConfiguration: false,
+    });
+  });
+
+  it("reports wallet-disabled readiness when no Neo N3 private key is configured", async () => {
+    const provider = createNeoProvider(createConfig(""));
+
+    jest
+      .spyOn(neoRpc.RPCClient.prototype, "getVersion")
+      .mockResolvedValue(createVersionResponse(860_833_102));
+
+    await expect(provider.checkReadiness()).resolves.toMatchObject({
+      walletEnabled: false,
+      walletAddress: undefined,
+    });
   });
 });

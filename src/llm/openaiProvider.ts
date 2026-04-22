@@ -1,9 +1,8 @@
 import OpenAI from "openai";
-
+import { buildPlannerSystemPrompt } from "../agent/systemPrompt";
 import type { AppConfig } from "../core/config";
 import { LlmPlanningError } from "../core/errors";
-import type { PlannerLlmRequest, LlmProvider } from "./provider";
-import { buildPlannerSystemPrompt } from "../agent/systemPrompt";
+import type { LlmProvider, PlannerLlmRequest } from "./provider";
 
 export class OpenAiProvider implements LlmProvider {
   private readonly client: OpenAI;

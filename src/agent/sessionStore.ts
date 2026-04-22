@@ -176,6 +176,39 @@ export class SessionStore {
     };
   }
 
+  public getStats(): {
+    activeSessions: number;
+    pendingActions: number;
+    draftActions: number;
+    recentBroadcasts: number;
+    maxAgeMs: number;
+  } {
+    this.cleanupExpiredSessions();
+    let pendingActions = 0;
+    let draftActions = 0;
+    let recentBroadcasts = 0;
+
+    for (const session of this.sessions.values()) {
+      if (session.pendingAction) {
+        pendingActions += 1;
+      }
+
+      if (session.draftAction) {
+        draftActions += 1;
+      }
+
+      recentBroadcasts += session.recentBroadcasts.length;
+    }
+
+    return {
+      activeSessions: this.sessions.size,
+      pendingActions,
+      draftActions,
+      recentBroadcasts,
+      maxAgeMs: this.maxAgeMs,
+    };
+  }
+
   private selectPrimaryAddress(
     defaultNetwork: NeoNetwork,
     walletAddresses: NetworkAddressMap,

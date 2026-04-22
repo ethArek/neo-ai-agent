@@ -19,6 +19,59 @@ It plans natural-language requests, maps them to Neo N3 tools, and can optionall
 - prepare and confirm Flamingo swaps on Neo N3
 - expose the same capabilities through an experimental REST API
 
+## Architecture
+
+```mermaid
+flowchart LR
+  User["User / Client"]
+
+  subgraph Entry["Entry Points"]
+    CLI["CLI\nsrc/index.ts\ncli/runner.ts"]
+    API["REST API\nsrc/server.ts\napi/server.ts"]
+  end
+
+  Config["Config Loader\ncore/config.ts"]
+  App["createAgentApp()\napp/createAgentApp.ts"]
+  Runtime["AgentRuntime"]
+  Planner["PlannerService"]
+  Registry["ToolRegistry"]
+  Sessions["SessionStore\nin-memory session state"]
+  LLM["LLM Provider\nOpenAI / Gemini"]
+  Tools["Tool Implementations\nreads + prepared writes"]
+  Neo["NeoProvider / NeoN3Provider"]
+  Chain["Neo N3 RPC / NNS / Flamingo"]
+  Ops["Logger + Telemetry\nhealth / ready / metrics"]
+
+  User --> CLI
+  User --> API
+
+  CLI --> Config
+  API --> Config
+  Config --> App
+
+  App --> Registry
+  App --> Planner
+  App --> Runtime
+  App --> Neo
+  App --> Sessions
+
+  Runtime --> Planner
+  Planner --> LLM
+  Runtime --> Registry
+  Runtime <--> Sessions
+  Registry --> Tools
+  Runtime --> Tools
+  Tools --> Neo
+  Neo --> Chain
+
+  API --> Runtime
+  API --> Registry
+  API --> Ops
+  Runtime --> Ops
+```
+
+Runtime keeps the confirmation boundary for dangerous actions. Planner maps natural-language requests to intents, tool implementations prepare or execute the requested operation, and the Neo provider is the only layer that talks to Neo RPC, NeoNS, and Flamingo contracts.
+
 ## Install
 
 ```bash
@@ -49,6 +102,12 @@ Verify:
 
 ```bash
 npm run verify
+```
+
+Release verify:
+
+```bash
+npm run verify:release
 ```
 
 ## Environment
@@ -112,6 +171,8 @@ Write tools do not broadcast immediately.
 
 For transfers, swaps, and contract writes, the agent first prepares an unsigned Neo N3 transaction and replies with a summary. The broadcast only happens after an explicit confirmation such as `Confirm`.
 
+`force` changes how the swap route and defaults are selected, but it still does not bypass confirmation.
+
 ## REST API
 
 The REST API is experimental.
@@ -119,6 +180,8 @@ The REST API is experimental.
 Useful routes:
 
 - `GET /health`
+- `GET /ready`
+- `GET /metrics`
 - `GET /api/tools`
 - `GET /openapi.json`
 - `GET /swagger.json`
@@ -133,3 +196,4 @@ Useful routes:
 - Neo N3 transfer history depends on the connected RPC capabilities
 - Flamingo routing uses the configured Neo N3 token map and pair graph
 - the API should be protected with `API_BEARER_TOKEN` when wallet mode is enabled
+- REST API responses include `X-Request-Id` for correlation

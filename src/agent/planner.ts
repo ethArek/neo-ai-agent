@@ -5,8 +5,8 @@ import {
   isNeoN3AddressReference,
   resolveAddressReference,
 } from "../core/addressResolver";
-import { formatNetworkLabel } from "../core/formatting";
 import { LlmPlanningError } from "../core/errors";
+import { formatNetworkLabel } from "../core/formatting";
 import { logger } from "../core/logger";
 import { hash256Schema } from "../core/validation";
 import type { LlmProvider } from "../llm/provider";
@@ -54,8 +54,20 @@ export class PlannerService {
           context,
           tools: this.tools,
         });
+        const providerPlan = this.parseProviderOutput(rawOutput);
 
-        return this.normalizePlan(this.parseProviderOutput(rawOutput));
+        if (this.isProviderTryingToControlConfirmation(providerPlan, message)) {
+          logger.warn(
+            "Ignoring provider confirmation intent because the user message was not an explicit confirmation phrase.",
+            {
+              intent: providerPlan.intent,
+            },
+          );
+
+          return this.heuristicPlan(message, context);
+        }
+
+        return this.normalizePlan(providerPlan);
       } catch (error) {
         logger.warn("Falling back to heuristic planner.", {
           error: error instanceof Error ? error.message : error,
@@ -662,5 +674,20 @@ export class PlannerService {
 
   private isCancelMessage(message: string): boolean {
     return /^(cancel|stop|never mind|abort)$/i.test(message.trim());
+  }
+
+  private isProviderTryingToControlConfirmation(
+    plan: PlannerAction,
+    message: string,
+  ): boolean {
+    if (plan.intent === "confirm_action") {
+      return !this.isConfirmMessage(message);
+    }
+
+    if (plan.intent === "cancel_action") {
+      return !this.isCancelMessage(message);
+    }
+
+    return false;
   }
 }

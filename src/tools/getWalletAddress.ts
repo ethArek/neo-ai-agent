@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import type { ToolDefinition } from "../agent/types";
 import { formatNetworkLabel } from "../core/formatting";
-import { neoNetworks, type NeoNetwork } from "../neo/types";
+import { type NeoNetwork, neoNetworks } from "../neo/types";
 
 const inputSchema = z.object({
   network: z.enum(neoNetworks).optional(),

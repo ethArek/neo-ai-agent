@@ -2,13 +2,13 @@ import { randomUUID } from "node:crypto";
 
 import {
   extractNeoN3AddressOrName,
-  isNeoN3AddressReference,
   resolveAddressReference,
   resolveSessionAddressReference,
 } from "../core/addressResolver";
 import { ValidationError } from "../core/errors";
-import type { BroadcastResult, NeoNetwork } from "../neo/types";
-import type { NeoProvider } from "../neo/types";
+import { logger } from "../core/logger";
+import { telemetry } from "../core/telemetry";
+import type { BroadcastResult, NeoNetwork, NeoProvider } from "../neo/types";
 import type { PlannerService } from "./planner";
 import type { SessionStore } from "./sessionStore";
 import type { ToolRegistry } from "./toolRegistry";
@@ -127,6 +127,18 @@ export class AgentRuntime {
     );
 
     if (hydratedPlan.intent === "confirm_action") {
+      if (!this.isConfirmMessage(normalizedMessage)) {
+        return {
+          sessionId: session.id,
+          message:
+            'Pending actions can only be confirmed with an explicit message such as "Confirm" or "Proceed".',
+          tool: null,
+          arguments: {},
+          result: null,
+          requiresConfirmation: false,
+        };
+      }
+
       if (!session.pendingAction) {
         return {
           sessionId: session.id,
@@ -142,6 +154,18 @@ export class AgentRuntime {
     }
 
     if (hydratedPlan.intent === "cancel_action") {
+      if (!this.isCancelMessage(normalizedMessage)) {
+        return {
+          sessionId: session.id,
+          message:
+            'Pending actions can only be canceled with an explicit message such as "Cancel" or "Abort".',
+          tool: null,
+          arguments: {},
+          result: null,
+          requiresConfirmation: false,
+        };
+      }
+
       if (!session.pendingAction) {
         if (session.draftAction) {
           const canceledTool = session.draftAction.tool;
@@ -197,54 +221,103 @@ export class AgentRuntime {
     const tool = this.registry.get(request.tool);
     const parsedInput = tool.schema.parse(request.arguments);
     const pendingActionBeforeExecution = session.pendingAction;
-    const execution = await tool.execute(
-      parsedInput,
-      {
-        neo: this.neo,
-        session: this.sessions.getToolSessionContext(session.id),
-      },
-      {
-        confirm: request.confirm,
-        pendingAction: session.pendingAction,
-      },
-    );
+    const executionStartedAt = process.hrtime.bigint();
 
-    if (execution.requiresConfirmation && execution.pendingAction) {
-      this.sessions.setPendingAction(session.id, execution.pendingAction);
-      this.sessions.clearDraftAction(session.id);
-    } else if (request.confirm) {
-      this.sessions.clearPendingAction(session.id);
-      this.sessions.clearDraftAction(session.id);
-    } else {
-      this.sessions.clearDraftAction(session.id);
+    try {
+      const execution = await tool.execute(
+        parsedInput,
+        {
+          neo: this.neo,
+          session: this.sessions.getToolSessionContext(session.id),
+        },
+        {
+          confirm: request.confirm,
+          pendingAction: session.pendingAction,
+        },
+      );
+
+      if (execution.requiresConfirmation && execution.pendingAction) {
+        this.sessions.setPendingAction(session.id, execution.pendingAction);
+        this.sessions.clearDraftAction(session.id);
+        telemetry.recordPreparedTransaction(request.tool);
+        logger.info("Prepared a pending blockchain action.", {
+          sessionId: session.id,
+          tool: request.tool,
+          actionId: execution.pendingAction.id,
+          network: execution.pendingAction.prepared.network,
+          sender: execution.pendingAction.prepared.sender,
+          to: execution.pendingAction.prepared.to,
+          amount: execution.pendingAction.prepared.amount,
+          tokenSymbol: execution.pendingAction.prepared.tokenSymbol,
+        });
+      } else if (request.confirm) {
+        this.sessions.clearPendingAction(session.id);
+        this.sessions.clearDraftAction(session.id);
+      } else {
+        this.sessions.clearDraftAction(session.id);
+      }
+
+      const broadcastActivity = this.createBroadcastActivity(
+        request.tool,
+        request.arguments,
+        execution.data,
+        pendingActionBeforeExecution?.prepared,
+      );
+
+      if (broadcastActivity) {
+        this.sessions.addBroadcastActivity(session.id, broadcastActivity);
+        telemetry.recordSubmittedTransaction(request.tool);
+        logger.info("Submitted a blockchain transaction.", {
+          sessionId: session.id,
+          tool: request.tool,
+          txHash: broadcastActivity.txHash,
+          network: broadcastActivity.network,
+          sender: broadcastActivity.sender,
+          to: broadcastActivity.to,
+          amount: broadcastActivity.amount,
+          tokenSymbol: broadcastActivity.tokenSymbol,
+          toTokenSymbol: broadcastActivity.toTokenSymbol,
+        });
+      }
+
+      this.rememberSessionAddress(
+        session.id,
+        request.tool,
+        request.arguments,
+        execution.data,
+      );
+      telemetry.recordToolExecution({
+        tool: request.tool,
+        durationMs: this.durationMs(executionStartedAt),
+        failed: false,
+      });
+
+      return {
+        sessionId: session.id,
+        message: execution.message,
+        tool: request.tool,
+        arguments: request.arguments,
+        result: execution.data,
+        requiresConfirmation: execution.requiresConfirmation ?? false,
+      };
+    } catch (error) {
+      const durationMs = this.durationMs(executionStartedAt);
+
+      telemetry.recordToolExecution({
+        tool: request.tool,
+        durationMs,
+        failed: true,
+      });
+      logger.error("Tool execution failed.", {
+        sessionId: session.id,
+        tool: request.tool,
+        confirm: Boolean(request.confirm),
+        durationMs,
+        error: error instanceof Error ? error.message : error,
+      });
+
+      throw error;
     }
-
-    const broadcastActivity = this.createBroadcastActivity(
-      request.tool,
-      request.arguments,
-      execution.data,
-      pendingActionBeforeExecution?.prepared,
-    );
-
-    if (broadcastActivity) {
-      this.sessions.addBroadcastActivity(session.id, broadcastActivity);
-    }
-
-    this.rememberSessionAddress(
-      session.id,
-      request.tool,
-      request.arguments,
-      execution.data,
-    );
-
-    return {
-      sessionId: session.id,
-      message: execution.message,
-      tool: request.tool,
-      arguments: request.arguments,
-      result: execution.data,
-      requiresConfirmation: execution.requiresConfirmation ?? false,
-    };
   }
 
   private async executePlannedAction(
@@ -710,5 +783,31 @@ export class AgentRuntime {
 
   private isNeoNetwork(value: string): value is NeoNetwork {
     return value === "neoN3" || value === "neoX";
+  }
+
+  public async getReadinessStatus(): Promise<{
+    neo: Awaited<ReturnType<NeoProvider["checkReadiness"]>>;
+    sessions: ReturnType<SessionStore["getStats"]>;
+    toolCount: number;
+  }> {
+    return {
+      neo: await this.neo.checkReadiness(),
+      sessions: this.sessions.getStats(),
+      toolCount: this.registry.listToolNames().length,
+    };
+  }
+
+  public getOperationalSnapshot(): {
+    sessions: ReturnType<SessionStore["getStats"]>;
+    toolCount: number;
+  } {
+    return {
+      sessions: this.sessions.getStats(),
+      toolCount: this.registry.listToolNames().length,
+    };
+  }
+
+  private durationMs(startedAt: bigint): number {
+    return Number(process.hrtime.bigint() - startedAt) / 1_000_000;
   }
 }

@@ -4,6 +4,17 @@ export type NeoNetwork = (typeof neoNetworks)[number];
 
 export type NetworkAddressMap = Partial<Record<NeoNetwork, string>>;
 
+export interface ProviderReadiness {
+  network: NeoNetwork;
+  configuredNetwork: string;
+  rpcUrl: string;
+  rpcReachable: boolean;
+  networkMagic?: number;
+  networkMatchesConfiguration: boolean;
+  walletEnabled: boolean;
+  walletAddress?: string;
+}
+
 export interface TokenMetadata {
   contractAddress: string;
   symbol: string;
@@ -214,4 +225,5 @@ export interface NeoProvider {
   ): Promise<PreparedTransaction>;
   signAndBroadcast(prepared: PreparedTransaction): Promise<BroadcastResult>;
   walletEnabled(network?: NeoNetwork): boolean;
+  checkReadiness(): Promise<ProviderReadiness>;
 }

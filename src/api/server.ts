@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   createServer,
   type IncomingMessage,
@@ -7,10 +8,11 @@ import {
 import { z } from "zod";
 
 import type { AgentRuntime } from "../agent/runtime";
-import { toolNames, type ToolName } from "../agent/types";
 import type { ToolRegistry } from "../agent/toolRegistry";
+import { type ToolName, toolNames } from "../agent/types";
 import { AppError, NotFoundError, serializeError } from "../core/errors";
 import { logger } from "../core/logger";
+import { telemetry } from "../core/telemetry";
 import { buildOpenApiDocument } from "./openapi";
 
 const jsonContentType = "application/json; charset=utf-8";
@@ -39,6 +41,7 @@ interface RequestContext {
   request: IncomingMessage;
   path: string;
   method: string;
+  requestId: string;
 }
 
 function sendJson(
@@ -78,6 +81,23 @@ function getBaseUrl(request: IncomingMessage): string {
       : "http";
 
   return `${protocol}://${request.headers.host ?? "localhost"}`;
+}
+
+function getOrCreateRequestId(request: IncomingMessage): string {
+  const header = request.headers["x-request-id"];
+
+  if (typeof header === "string" && header.trim() !== "") {
+    return header.trim();
+  }
+
+  return randomUUID();
+}
+
+function isPublicRoute(method: string, path: string): boolean {
+  return (
+    method === "GET" &&
+    (path === "/health" || path === "/ready" || path === "/metrics")
+  );
 }
 
 function assertAuthorized(
@@ -182,6 +202,52 @@ async function handleHealth(
   });
 }
 
+async function handleReady(
+  response: ServerResponse,
+  runtime: AgentRuntime,
+): Promise<void> {
+  try {
+    const readiness = await runtime.getReadinessStatus();
+
+    if (!readiness.neo.networkMatchesConfiguration) {
+      throw new AppError("Service is not ready.", {
+        code: "NOT_READY",
+        statusCode: 503,
+        expose: true,
+        details: {
+          reason:
+            "Configured Neo N3 network does not match the connected RPC network magic.",
+          readiness,
+        },
+      });
+    }
+
+    sendJson(response, 200, {
+      status: "ready",
+      ...readiness,
+    });
+  } catch (error) {
+    throw new AppError("Service is not ready.", {
+      code: "NOT_READY",
+      statusCode: 503,
+      expose: true,
+      details: {
+        error: error instanceof Error ? error.message : error,
+      },
+    });
+  }
+}
+
+async function handleMetrics(
+  response: ServerResponse,
+  runtime: AgentRuntime,
+): Promise<void> {
+  sendJson(response, 200, {
+    ...telemetry.snapshot(),
+    runtime: runtime.getOperationalSnapshot(),
+  });
+}
+
 async function handleTools(
   response: ServerResponse,
   registry: ToolRegistry,
@@ -263,6 +329,18 @@ async function routeRequest(
     return;
   }
 
+  if (context.method === "GET" && context.path === "/ready") {
+    await handleReady(response, runtime);
+
+    return;
+  }
+
+  if (context.method === "GET" && context.path === "/metrics") {
+    await handleMetrics(response, runtime);
+
+    return;
+  }
+
   if (
     context.method === "GET" &&
     (context.path === "/openapi.json" || context.path === "/swagger.json")
@@ -310,24 +388,35 @@ export function createApiServer(options: ApiServerOptions): Server {
       `http://${request.headers.host ?? "localhost"}`,
     );
     const path = url.pathname;
+    const requestId = getOrCreateRequestId(request);
+    const requestStartedAt = process.hrtime.bigint();
+    let statusCode = 500;
+
+    response.setHeader("X-Request-Id", requestId);
 
     try {
-      assertAuthorized(request, options.bearerToken);
+      if (!isPublicRoute(method, path)) {
+        assertAuthorized(request, options.bearerToken);
+      }
 
       await routeRequest(
         {
           request,
           path,
           method,
+          requestId,
         },
         response,
         options.runtime,
         options.registry,
       );
+      statusCode = response.statusCode || 200;
     } catch (error) {
       const serialized = serializeError(error);
 
+      statusCode = serialized.statusCode;
       logger.error("REST API request failed.", {
+        requestId,
         method,
         path,
         statusCode: serialized.statusCode,
@@ -338,6 +427,41 @@ export function createApiServer(options: ApiServerOptions): Server {
       sendJson(response, serialized.statusCode, {
         error: serialized,
       });
+    } finally {
+      const durationMs =
+        Number(process.hrtime.bigint() - requestStartedAt) / 1_000_000;
+
+      telemetry.recordApiRequest({
+        name: `${method} ${path}`,
+        statusCode,
+        durationMs,
+      });
+
+      if (statusCode >= 500) {
+        logger.error("REST API request completed with server error.", {
+          requestId,
+          method,
+          path,
+          statusCode,
+          durationMs,
+        });
+      } else if (statusCode >= 400) {
+        logger.warn("REST API request completed with client error.", {
+          requestId,
+          method,
+          path,
+          statusCode,
+          durationMs,
+        });
+      } else {
+        logger.info("REST API request completed.", {
+          requestId,
+          method,
+          path,
+          statusCode,
+          durationMs,
+        });
+      }
     }
   });
 }

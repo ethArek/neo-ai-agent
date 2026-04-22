@@ -4,18 +4,19 @@ import { createBroadcastResult } from "../../src/neo/broadcast";
 import type {
   BlockReference,
   BroadcastResult,
-  NeoNetwork,
   NeoN3ContractWriteInput,
   NeoN3PortfolioOverview,
   NeoN3ReadInvocationResult,
   NeoN3SwapQuote,
   NeoN3SwapQuoteInput,
-  NeoN3TokenTransferInput,
   NeoN3TokenSwapInput,
+  NeoN3TokenTransferInput,
   NeoN3TransferHistory,
+  NeoNetwork,
   NeoProvider,
   NetworkAddressMap,
   PreparedTransaction,
+  ProviderReadiness,
   TokenBalance,
   TokenMetadata,
   TransactionDetails,
@@ -487,6 +488,19 @@ export class FakeNeoProvider implements NeoProvider {
     }
 
     return network === "neoN3";
+  }
+
+  public async checkReadiness(): Promise<ProviderReadiness> {
+    return {
+      network: "neoN3",
+      configuredNetwork: "mainnet",
+      rpcUrl: "https://n3.example.com",
+      rpcReachable: true,
+      networkMagic: 860_833_102,
+      networkMatchesConfiguration: true,
+      walletEnabled: true,
+      walletAddress: this.neoN3Address,
+    };
   }
 
   private normalizeAddress(address: string): string {

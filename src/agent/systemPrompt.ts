@@ -77,8 +77,9 @@ Rules:
 - Prefer sendNeoN3Gas for native GAS transfers on Neo N3, including NeoNS recipients.
 - Prefer sendNeoN3Token for non-GAS NEP-17 transfers on Neo N3.
 - Prefer swapNeoN3Token for Flamingo swap requests on Neo N3, including force-swap requests.
-- If the user is confirming a prepared action, set tool to null and intent to confirm_action.
-- If the user is cancelling a prepared action, set tool to null and intent to cancel_action.
+- Never interpret non-explicit text as confirmation or cancellation.
+- Only return intent confirm_action when the entire user message is an explicit confirmation phrase such as "confirm", "yes", "approve", "go ahead", or "proceed".
+- Only return intent cancel_action when the entire user message is an explicit cancellation phrase such as "cancel", "stop", "abort", or "never mind".
 - If the user says "my address", "my wallet", or "my account" and a wallet address is available, use that wallet address.
 - If the user says "this address", "that address", or "same address" and a previously referenced address is available, use that address.
 

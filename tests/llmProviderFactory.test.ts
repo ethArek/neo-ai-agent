@@ -1,6 +1,6 @@
 import {
-  resolveLlmProviderSelection,
   type AppConfig,
+  resolveLlmProviderSelection,
 } from "../src/core/config";
 import { ValidationError } from "../src/core/errors";
 import { createLlmProvider } from "../src/llm/createProvider";

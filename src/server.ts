@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 
+import { startApiServer } from "./api/server";
+import { createAgentApp } from "./app/createAgentApp";
 import { loadConfig } from "./core/config";
 import { logger } from "./core/logger";
-import { createAgentApp } from "./app/createAgentApp";
-import { startApiServer } from "./api/server";
 
 async function main(): Promise<void> {
   const config = loadConfig();

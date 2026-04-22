@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { ToolDefinition } from "../agent/types";
 import { formatNetworkLabel } from "../core/formatting";
 import { hash256Schema } from "../core/validation";
-import { neoNetworks, type NeoNetwork } from "../neo/types";
+import { neoNetworks } from "../neo/types";
 
 const inputSchema = z
   .object({

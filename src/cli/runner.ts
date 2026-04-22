@@ -1,10 +1,10 @@
-import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
+import { createInterface } from "node:readline/promises";
 import { Command, InvalidArgumentError } from "commander";
 
 import type { AgentRuntime } from "../agent/runtime";
-import { toolNames } from "../agent/types";
 import type { ToolName } from "../agent/types";
+import { toolNames } from "../agent/types";
 import {
   buildConfirmationGuidance,
   type ConfirmationMode,

@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 
-import { loadConfig } from "./core/config";
-import { logger } from "./core/logger";
 import { createAgentApp } from "./app/createAgentApp";
 import { runCli } from "./cli/runner";
 import { createCliTheme } from "./cli/theme";
+import { loadConfig } from "./core/config";
+import { logger } from "./core/logger";
 
 async function main(): Promise<void> {
   const config = loadConfig();

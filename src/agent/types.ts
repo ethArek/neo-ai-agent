@@ -1,13 +1,12 @@
 import type { z } from "zod";
-
 import type {
   BroadcastResult,
   NeoNetwork,
+  NeoProvider,
   NetworkAddressMap,
   PreparedTransaction,
   TransactionStatusState,
 } from "../neo/types";
-import type { NeoProvider } from "../neo/types";
 
 export const toolNames = [
   "getNeoN3PortfolioOverview",
@@ -102,10 +101,8 @@ export interface PlannerToolDescriptor {
   dangerous: boolean;
 }
 
-export interface ToolDefinition<
-  TInput = unknown,
-  TResult = unknown,
-> extends PlannerToolDescriptor {
+export interface ToolDefinition<TInput = unknown, TResult = unknown>
+  extends PlannerToolDescriptor {
   schema: z.ZodType<TInput>;
   execute(
     input: TInput,
