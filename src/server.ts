@@ -37,6 +37,7 @@ async function main(): Promise<void> {
       server.close((error) => {
         if (error) {
           reject(error);
+
           return;
         }
 

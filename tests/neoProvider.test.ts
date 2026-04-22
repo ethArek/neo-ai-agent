@@ -5,24 +5,11 @@ import {
 } from "@cityofzion/neon-js";
 
 import type { AppConfig } from "../src/core/config";
-import { createNeoProvider } from "../src/neo/client";
+import { createNeoProvider, NeoN3Provider } from "../src/neo/client";
 
 const neoN3MainnetNnsContract = "0x50ac1c37690cc2cfc594472833cf57505d5f46de";
 const neoN3GasTokenContract = "0xd2a4cff31913016155e38e474a2c06d08be276cf";
 const bNeoMainnetContract = "0x48c40d4666f93408be1bef038b6722404d9a4c2a";
-
-type SwapQuoteTestProvider = ReturnType<typeof createNeoProvider> & {
-  getNeoN3ConvertAmountOut(
-    amountInRaw: bigint,
-    routeContracts: string[],
-    tradingPairIds: number[],
-  ): Promise<bigint>;
-  getNeoN3SwapPathQuote(
-    amountInRaw: bigint,
-    routeContracts: string[],
-    tradingPairIds: number[],
-  ): Promise<bigint[]>;
-};
 
 function createConfig(n3WalletPrivateKey: string): AppConfig {
   return {
@@ -51,6 +38,32 @@ function createConfig(n3WalletPrivateKey: string): AppConfig {
   };
 }
 
+class SwapQuoteTestNeoProvider extends NeoN3Provider {
+  public async getNeoN3SwapPathQuoteForTest(
+    amountInRaw: bigint,
+    routeContracts: string[],
+    tradingPairIds: number[],
+  ): Promise<bigint[]> {
+    return this.getNeoN3SwapPathQuote(
+      amountInRaw,
+      routeContracts,
+      tradingPairIds,
+    );
+  }
+
+  public override async getNeoN3ConvertAmountOut(
+    amountInRaw: bigint,
+    routeContracts: string[],
+    tradingPairIds: number[],
+  ): Promise<bigint> {
+    return super.getNeoN3ConvertAmountOut(
+      amountInRaw,
+      routeContracts,
+      tradingPairIds,
+    );
+  }
+}
+
 describe("NeoProvider", () => {
   afterEach(() => {
     jest.restoreAllMocks();
@@ -73,14 +86,10 @@ describe("NeoProvider", () => {
 
   it("quotes each cumulative Flamingo route prefix from the original input amount", async () => {
     const account = new neoWallet.Account();
-    const provider = createNeoProvider(
-      createConfig(account.WIF),
-    ) as unknown as SwapQuoteTestProvider;
+    const provider = new SwapQuoteTestNeoProvider(createConfig(account.WIF));
     const convertAmountOutSpy = jest
       .spyOn(provider, "getNeoN3ConvertAmountOut")
-      .mockImplementation(async (...args: unknown[]) => {
-        const [amountInRaw, routeContracts] = args as [bigint, string[]];
-
+      .mockImplementation(async (amountInRaw, routeContracts) => {
         if (routeContracts.length === 2) {
           expect(amountInRaw).toBe(100n);
 
@@ -96,7 +105,7 @@ describe("NeoProvider", () => {
         throw new Error("Unexpected route length.");
       });
 
-    const routeAmountsRaw = await provider.getNeoN3SwapPathQuote(
+    const routeAmountsRaw = await provider.getNeoN3SwapPathQuoteForTest(
       100n,
       [
         "0x0000000000000000000000000000000000000001",

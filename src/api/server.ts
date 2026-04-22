@@ -259,6 +259,7 @@ async function routeRequest(
 ): Promise<void> {
   if (context.method === "GET" && context.path === "/health") {
     await handleHealth(response, registry);
+
     return;
   }
 
@@ -267,21 +268,25 @@ async function routeRequest(
     (context.path === "/openapi.json" || context.path === "/swagger.json")
   ) {
     await handleOpenApiDocument(context.request, response, registry);
+
     return;
   }
 
   if (context.method === "GET" && context.path === "/api/tools") {
     await handleTools(response, registry);
+
     return;
   }
 
   if (context.method === "POST" && context.path === "/api/messages") {
     await handleMessage(context, response, runtime);
+
     return;
   }
 
   if (context.method === "POST" && context.path.startsWith("/api/tools/")) {
     await handleToolExecution(context, response, runtime);
+
     return;
   }
 
@@ -290,6 +295,7 @@ async function routeRequest(
     /^\/api\/sessions\/[^/]+\/(confirm|cancel)$/.test(context.path)
   ) {
     await handleSessionAction(context, response, runtime);
+
     return;
   }
 

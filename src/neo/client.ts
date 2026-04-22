@@ -1502,7 +1502,7 @@ export class NeoN3Provider implements NeoProvider {
     });
   }
 
-  private async getNeoN3SwapPathQuote(
+  protected async getNeoN3SwapPathQuote(
     amountInRaw: bigint,
     routeContracts: string[],
     tradingPairIds: number[],
@@ -1522,7 +1522,7 @@ export class NeoN3Provider implements NeoProvider {
     return routeAmountsRaw;
   }
 
-  private async getNeoN3ConvertAmountOut(
+  protected async getNeoN3ConvertAmountOut(
     amountInRaw: bigint,
     routeContracts: string[],
     tradingPairIds: number[],

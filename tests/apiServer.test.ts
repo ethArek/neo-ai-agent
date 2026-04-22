@@ -53,6 +53,7 @@ async function closeServer(server: Server): Promise<void> {
     server.close((error) => {
       if (error) {
         reject(error);
+
         return;
       }
 
