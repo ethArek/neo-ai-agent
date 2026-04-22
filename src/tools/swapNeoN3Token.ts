@@ -34,6 +34,16 @@ export const swapNeoN3TokenTool: ToolDefinition<Input> = {
     }
 
     const prepared = await context.neo.prepareNeoN3TokenSwap(parsed);
+
+    if (parsed.force) {
+      const broadcast = await context.neo.signAndBroadcast(prepared);
+
+      return {
+        message: `Force swap requested. ${createBroadcastMessage(broadcast)}`,
+        data: broadcast,
+      };
+    }
+
     const pendingAction = createPendingTransactionAction(
       "swapNeoN3Token",
       parsed,

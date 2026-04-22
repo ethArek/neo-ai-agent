@@ -125,18 +125,18 @@ describe("AgentRuntime", () => {
     });
   });
 
-  it("prepares and then confirms a Flamingo swap on Neo N3", async () => {
+  it("submits a force Flamingo swap on Neo N3 without confirmation", async () => {
     const provider = new FakeNeoProvider();
     const prepareSpy = jest.spyOn(provider, "prepareNeoN3TokenSwap");
     const signSpy = jest.spyOn(provider, "signAndBroadcast");
     const runtime = createRuntime(provider);
 
-    const prepared = await runtime.handleMessage(
+    const response = await runtime.handleMessage(
       "Swap 1 GAS for FUSD with force and 1% slippage",
     );
 
-    expect(prepared.tool).toBe("swapNeoN3Token");
-    expect(prepared.requiresConfirmation).toBe(true);
+    expect(response.tool).toBe("swapNeoN3Token");
+    expect(response.requiresConfirmation).toBe(false);
     expect(prepareSpy).toHaveBeenCalledWith({
       amount: "1",
       fromToken: "GAS",
@@ -145,8 +145,32 @@ describe("AgentRuntime", () => {
       deadlineMinutes: undefined,
       force: true,
     });
-    expect(prepared.message).toContain("Force swap requested");
-    expect(prepared.message).toContain("minimum received");
+    expect(signSpy).toHaveBeenCalledTimes(1);
+    expect(response.message).toContain("Force swap requested");
+    expect(response.message).toContain("Submitted a Flamingo swap");
+    expect(response.message).toContain(provider.latestTxHash);
+  });
+
+  it("still requires confirmation for a regular Flamingo swap on Neo N3", async () => {
+    const provider = new FakeNeoProvider();
+    const prepareSpy = jest.spyOn(provider, "prepareNeoN3TokenSwap");
+    const signSpy = jest.spyOn(provider, "signAndBroadcast");
+    const runtime = createRuntime(provider);
+
+    const prepared = await runtime.handleMessage("Swap 1 GAS for FUSD");
+
+    expect(prepared.tool).toBe("swapNeoN3Token");
+    expect(prepared.requiresConfirmation).toBe(true);
+    expect(prepareSpy).toHaveBeenCalledWith({
+      amount: "1",
+      fromToken: "GAS",
+      toToken: "FUSD",
+      slippagePercent: undefined,
+      deadlineMinutes: undefined,
+      force: false,
+    });
+    expect(signSpy).not.toHaveBeenCalled();
+    expect(prepared.message).toContain('Reply with "Confirm"');
 
     const confirmed = await runtime.handleMessage(
       "Confirm",
