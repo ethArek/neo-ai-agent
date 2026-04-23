@@ -64,12 +64,50 @@ describe("runCli", () => {
 
     await expect(runCli(runtime, ["interactive"])).resolves.toBeUndefined();
 
+    expect(stdoutWriteSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Network:"),
+    );
+    expect(stdoutWriteSpy).toHaveBeenCalledWith(
+      expect.stringContaining("MAINNET"),
+    );
     expect(stderrWriteSpy).toHaveBeenCalledWith(
       expect.stringContaining("NeoNS name 'arkadiusz.neo' has expired."),
     );
     expect(readline.question).toHaveBeenCalledTimes(2);
     expect(readline.close).toHaveBeenCalledTimes(1);
     expect(stdoutWriteSpy).toHaveBeenCalled();
+  });
+
+  it("shows a network banner in interactive mode even when the readiness probe fails", async () => {
+    const readline = {
+      question: jest
+        .fn<Promise<string>, [string]>()
+        .mockResolvedValueOnce("exit"),
+      close: jest.fn(),
+    } satisfies {
+      question: (prompt: string) => Promise<string>;
+      close: () => void;
+    };
+    const stdoutWriteSpy = jest
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+    const runtime = createRuntime();
+
+    jest
+      .mocked(createInterface)
+      .mockReturnValue(
+        readline as unknown as ReturnType<typeof createInterface>,
+      );
+    jest
+      .spyOn(runtime, "getReadinessStatus")
+      .mockRejectedValueOnce(new Error("RPC unavailable"));
+
+    await expect(runCli(runtime, ["interactive"])).resolves.toBeUndefined();
+
+    expect(stdoutWriteSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Network: Neo N3 unavailable"),
+    );
+    expect(readline.close).toHaveBeenCalledTimes(1);
   });
 
   it("shows a spinner while waiting for a long-running CLI request", async () => {

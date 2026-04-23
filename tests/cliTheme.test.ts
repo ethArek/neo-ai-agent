@@ -7,6 +7,9 @@ describe("createCliTheme", () => {
     expect(theme.renderLabel("Tool", "sendNeoN3Gas")).toBe(
       "Tool: sendNeoN3Gas",
     );
+    expect(theme.renderNetworkStatus("mainnet")).toBe(
+      "Network: Neo N3  MAINNET ",
+    );
     expect(theme.renderPrompt()).toBe("neo> ");
     expect(theme.renderJson({ amount: 1, confirmed: true })).toBe(
       JSON.stringify(
@@ -25,6 +28,8 @@ describe("createCliTheme", () => {
 
     expect(theme.renderBanner()).toContain("\u001b[");
     expect(theme.renderBanner()).toContain("Neo AI Agent");
+    expect(theme.renderNetworkStatus("testnet")).toContain("\u001b[");
+    expect(theme.renderNetworkStatus("testnet")).toContain("TESTNET");
     expect(theme.renderPrompt()).toContain("\u001b[");
     expect(theme.renderWarning("Requires confirmation")).toContain("\u001b[");
   });

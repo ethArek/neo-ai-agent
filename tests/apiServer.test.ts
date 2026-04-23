@@ -225,10 +225,13 @@ describe("REST API server", () => {
         requiresConfirmation: boolean;
         message: string;
         result: {
-          address: string;
-          tokens: Array<{
-            requestedToken: string;
-          }>;
+          postTransactionBalances: {
+            address: string;
+            tokens: Array<{
+              requestedToken: string;
+            }>;
+          };
+          transactionExplorerUrl: string;
         };
       };
 
@@ -238,15 +241,18 @@ describe("REST API server", () => {
       expect(payload.message).toContain("Force swap requested");
       expect(payload.message).toContain("Submitted a Flamingo swap");
       expect(payload.result).toMatchObject({
-        address: setup.provider.neoN3Address,
-        tokens: [
-          {
-            requestedToken: "GAS",
-          },
-          {
-            requestedToken: "FUSD",
-          },
-        ],
+        postTransactionBalances: {
+          address: setup.provider.neoN3Address,
+          tokens: [
+            {
+              requestedToken: "GAS",
+            },
+            {
+              requestedToken: "FUSD",
+            },
+          ],
+        },
+        transactionExplorerUrl: `https://dora.coz.io/transaction/neo3/mainnet/${setup.provider.latestTxHash}`,
       });
       expect(prepareSpy).toHaveBeenCalledWith({
         amount: "1",

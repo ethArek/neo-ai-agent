@@ -192,6 +192,20 @@ async function runInteractive(
   colorEnabled: boolean,
 ): Promise<void> {
   const theme = createCliTheme(colorEnabled);
+  let networkStatusLine = theme.renderWarning(
+    "Network: Neo N3 unavailable (could not load readiness).",
+  );
+
+  try {
+    const readiness = await runtime.getReadinessStatus();
+
+    networkStatusLine = theme.renderNetworkStatus(
+      readiness.neo.configuredNetwork,
+    );
+  } catch {
+    // Keep interactive mode usable even if the readiness probe fails.
+  }
+
   const readline = createInterface({
     input,
     output,
@@ -200,6 +214,7 @@ async function runInteractive(
   let sessionId: string | undefined;
 
   output.write(`${theme.renderBanner()}\n`);
+  output.write(`${networkStatusLine}\n`);
   output.write(
     `${theme.renderMuted("Type 'exit' to quit. Type 'Confirm' or 'Cancel' for pending actions.")}\n`,
   );

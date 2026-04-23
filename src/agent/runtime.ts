@@ -50,6 +50,9 @@ interface AgentRuntimeExecutionOptions {
 }
 
 export class AgentRuntime {
+  private static readonly neoN3MainnetNetworkMagic = 860_833_102;
+  private static readonly neoN3TestnetNetworkMagic = 894_710_606;
+
   private readonly planner: PlannerService;
   private readonly registry: ToolRegistry;
   private readonly neo: NeoProvider;
@@ -334,6 +337,7 @@ export class AgentRuntime {
           responseResult = this.buildBroadcastResponseResult(
             request.tool,
             receipt,
+            preparedTransaction,
           );
         }
       }
@@ -1040,12 +1044,50 @@ export class AgentRuntime {
   private buildBroadcastResponseResult(
     tool: ToolName,
     receipt: BroadcastReceipt,
+    prepared?: PreparedTransaction,
   ): unknown {
     if (tool === "swapNeoN3Token") {
-      return receipt.postTransactionBalances ?? null;
+      return {
+        postTransactionBalances: receipt.postTransactionBalances ?? null,
+        transactionExplorerUrl: this.buildDoraTransactionExplorerUrl(
+          receipt.broadcast,
+          prepared,
+        ),
+      };
     }
 
     return receipt;
+  }
+
+  private buildDoraTransactionExplorerUrl(
+    broadcast: BroadcastResult,
+    prepared?: PreparedTransaction,
+  ): string | null {
+    if (broadcast.network !== "neoN3") {
+      return null;
+    }
+
+    const explorerNetwork = this.resolveDoraExplorerNetwork(prepared);
+
+    if (!explorerNetwork) {
+      return null;
+    }
+
+    return `https://dora.coz.io/transaction/neo3/${explorerNetwork}/${broadcast.txHash}`;
+  }
+
+  private resolveDoraExplorerNetwork(
+    prepared?: PreparedTransaction,
+  ): "mainnet" | "testnet" | undefined {
+    if (prepared?.networkMagic === AgentRuntime.neoN3MainnetNetworkMagic) {
+      return "mainnet";
+    }
+
+    if (prepared?.networkMagic === AgentRuntime.neoN3TestnetNetworkMagic) {
+      return "testnet";
+    }
+
+    return undefined;
   }
 
   private buildConfirmationProgressLabel(tool: ToolName): string {

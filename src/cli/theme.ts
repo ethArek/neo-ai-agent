@@ -36,6 +36,7 @@ function highlightJsonToken(token: string, colorEnabled: boolean): string {
 export interface CliTheme {
   readonly colorEnabled: boolean;
   renderBanner(): string;
+  renderNetworkStatus(network: string): string;
   renderPrompt(): string;
   renderPrimaryMessage(message: string): string;
   renderLabel(label: string, value: string): string;
@@ -59,6 +60,17 @@ export function createCliTheme(colorEnabled = shouldUseColor()): CliTheme {
       );
 
       return `${title}\n${subtitle}`;
+    },
+    renderNetworkStatus(network: string): string {
+      const normalizedNetwork = network.trim().toLowerCase();
+      const badgeText = normalizedNetwork.toUpperCase();
+      const badgeCodes =
+        normalizedNetwork === "testnet" ? [1, 30, 42] : [1, 37, 41];
+      const badge = applyAnsi(` ${badgeText} `, badgeCodes, colorEnabled);
+      const label = applyAnsi("Network:", [1, 36], colorEnabled);
+      const context = applyAnsi("Neo N3", [2, 37], colorEnabled);
+
+      return `${label} ${context} ${badge}`;
     },
     renderPrompt(): string {
       return applyAnsi("neo> ", [1, 34], colorEnabled);

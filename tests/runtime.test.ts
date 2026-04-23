@@ -232,23 +232,26 @@ describe("AgentRuntime", () => {
       "FUSD",
     );
     expect(response.result).toMatchObject({
-      address: provider.neoN3Address,
-      tokens: [
-        {
-          requestedToken: "GAS",
-          balance: {
-            symbol: "GAS",
-            balance: "4.56",
+      postTransactionBalances: {
+        address: provider.neoN3Address,
+        tokens: [
+          {
+            requestedToken: "GAS",
+            balance: {
+              symbol: "GAS",
+              balance: "4.56",
+            },
           },
-        },
-        {
-          requestedToken: "FUSD",
-          balance: {
-            symbol: "FUSD",
-            balance: "12.5",
+          {
+            requestedToken: "FUSD",
+            balance: {
+              symbol: "FUSD",
+              balance: "12.5",
+            },
           },
-        },
-      ],
+        ],
+      },
+      transactionExplorerUrl: `https://dora.coz.io/transaction/neo3/mainnet/${provider.latestTxHash}`,
     });
   });
 
@@ -275,7 +278,10 @@ describe("AgentRuntime", () => {
     expect(statusSpy).toHaveBeenCalledTimes(1);
     expect(balancesSpy).not.toHaveBeenCalled();
     expect(response.message).toContain("Waiting for transaction to confirm.");
-    expect(response.result).toBeNull();
+    expect(response.result).toEqual({
+      postTransactionBalances: null,
+      transactionExplorerUrl: `https://dora.coz.io/transaction/neo3/mainnet/${provider.latestTxHash}`,
+    });
   });
 
   it("still requires confirmation for a regular Flamingo swap on Neo N3", async () => {
