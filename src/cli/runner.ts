@@ -10,7 +10,11 @@ import {
   buildConfirmationGuidance,
   type ConfirmationMode,
 } from "./confirmation";
+import type { CliNetworkStatus } from "./theme";
 import { createCliTheme } from "./theme";
+
+const neoN3MainnetNetworkMagic = 860_833_102;
+const neoN3TestnetNetworkMagic = 894_710_606;
 
 function renderConfirmationLine(
   line: string,
@@ -186,6 +190,32 @@ function updateSpinnerForProgress(
   }
 }
 
+function resolveNeoN3NetworkFromMagic(
+  networkMagic: number | undefined,
+): "mainnet" | "testnet" | undefined {
+  if (networkMagic === neoN3MainnetNetworkMagic) {
+    return "mainnet";
+  }
+
+  if (networkMagic === neoN3TestnetNetworkMagic) {
+    return "testnet";
+  }
+
+  return undefined;
+}
+
+function buildCliNetworkStatus(
+  readiness: Awaited<ReturnType<AgentRuntime["getReadinessStatus"]>>,
+): CliNetworkStatus {
+  return {
+    network:
+      resolveNeoN3NetworkFromMagic(readiness.neo.networkMagic) ??
+      readiness.neo.configuredNetwork,
+    configuredNetwork: readiness.neo.configuredNetwork,
+    matchesConfiguration: readiness.neo.networkMatchesConfiguration,
+  };
+}
+
 async function runInteractive(
   runtime: AgentRuntime,
   json: boolean,
@@ -200,7 +230,7 @@ async function runInteractive(
     const readiness = await runtime.getReadinessStatus();
 
     networkStatusLine = theme.renderNetworkStatus(
-      readiness.neo.configuredNetwork,
+      buildCliNetworkStatus(readiness),
     );
   } catch {
     // Keep interactive mode usable even if the readiness probe fails.

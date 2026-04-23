@@ -10,6 +10,13 @@ describe("createCliTheme", () => {
     expect(theme.renderNetworkStatus("mainnet")).toBe(
       "Network: Neo N3  MAINNET ",
     );
+    expect(
+      theme.renderNetworkStatus({
+        network: "testnet",
+        configuredNetwork: "mainnet",
+        matchesConfiguration: false,
+      }),
+    ).toBe("Network: Neo N3  TESTNET  (configured: MAINNET)");
     expect(theme.renderPrompt()).toBe("neo> ");
     expect(theme.renderJson({ amount: 1, confirmed: true })).toBe(
       JSON.stringify(

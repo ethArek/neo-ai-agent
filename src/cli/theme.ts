@@ -33,10 +33,16 @@ function highlightJsonToken(token: string, colorEnabled: boolean): string {
   return applyAnsi(token, [33], colorEnabled);
 }
 
+export interface CliNetworkStatus {
+  network: string;
+  configuredNetwork?: string;
+  matchesConfiguration?: boolean;
+}
+
 export interface CliTheme {
   readonly colorEnabled: boolean;
   renderBanner(): string;
-  renderNetworkStatus(network: string): string;
+  renderNetworkStatus(status: string | CliNetworkStatus): string;
   renderPrompt(): string;
   renderPrimaryMessage(message: string): string;
   renderLabel(label: string, value: string): string;
@@ -61,7 +67,8 @@ export function createCliTheme(colorEnabled = shouldUseColor()): CliTheme {
 
       return `${title}\n${subtitle}`;
     },
-    renderNetworkStatus(network: string): string {
+    renderNetworkStatus(status: string | CliNetworkStatus): string {
+      const network = typeof status === "string" ? status : status.network;
       const normalizedNetwork = network.trim().toLowerCase();
       const badgeText = normalizedNetwork.toUpperCase();
       const badgeCodes =
@@ -69,6 +76,23 @@ export function createCliTheme(colorEnabled = shouldUseColor()): CliTheme {
       const badge = applyAnsi(` ${badgeText} `, badgeCodes, colorEnabled);
       const label = applyAnsi("Network:", [1, 36], colorEnabled);
       const context = applyAnsi("Neo N3", [2, 37], colorEnabled);
+      const configuredNetwork =
+        typeof status === "string" ? undefined : status.configuredNetwork;
+      const isMismatch =
+        typeof status === "object" &&
+        status.matchesConfiguration === false &&
+        configuredNetwork !== undefined &&
+        configuredNetwork.trim().toLowerCase() !== normalizedNetwork;
+
+      if (isMismatch) {
+        const warning = applyAnsi(
+          `(configured: ${configuredNetwork.toUpperCase()})`,
+          [1, 33],
+          colorEnabled,
+        );
+
+        return `${label} ${context} ${badge} ${warning}`;
+      }
 
       return `${label} ${context} ${badge}`;
     },

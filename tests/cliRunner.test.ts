@@ -110,6 +110,43 @@ describe("runCli", () => {
     expect(readline.close).toHaveBeenCalledTimes(1);
   });
 
+  it("shows the actual RPC network when configured network and network magic differ", async () => {
+    const readline = {
+      question: jest
+        .fn<Promise<string>, [string]>()
+        .mockResolvedValueOnce("exit"),
+      close: jest.fn(),
+    } satisfies {
+      question: (prompt: string) => Promise<string>;
+      close: () => void;
+    };
+    const stdoutWriteSpy = jest
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+    const runtime = createRuntime();
+    const readiness = await runtime.getReadinessStatus();
+
+    readiness.neo.configuredNetwork = "mainnet";
+    readiness.neo.networkMagic = 894_710_606;
+    readiness.neo.networkMatchesConfiguration = false;
+    jest
+      .mocked(createInterface)
+      .mockReturnValue(
+        readline as unknown as ReturnType<typeof createInterface>,
+      );
+    jest.spyOn(runtime, "getReadinessStatus").mockResolvedValueOnce(readiness);
+
+    await expect(runCli(runtime, ["interactive"])).resolves.toBeUndefined();
+
+    expect(stdoutWriteSpy).toHaveBeenCalledWith(
+      expect.stringContaining("TESTNET"),
+    );
+    expect(stdoutWriteSpy).toHaveBeenCalledWith(
+      expect.stringContaining("configured: MAINNET"),
+    );
+    expect(readline.close).toHaveBeenCalledTimes(1);
+  });
+
   it("shows a spinner while waiting for a long-running CLI request", async () => {
     jest.useFakeTimers();
 
