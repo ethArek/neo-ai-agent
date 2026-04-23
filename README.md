@@ -1,5 +1,7 @@
 # Neo AI Agent
 
+![Neo AI Agent CLI + REST API](assets/neo-ai-agent-hero.png)
+
 Neo AI Agent is a Neo N3 assistant that lets you ask for blockchain actions in normal language instead of raw RPC calls or contract tooling.
 
 Technically, it is a CLI-first agent with an experimental REST API. User requests are mapped to Neo N3 tools by an optional OpenAI or Gemini planner, with a built-in fallback planner for common prompts when no LLM is configured.
