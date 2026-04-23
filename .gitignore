@@ -5,3 +5,4 @@ coverage
 .env testnet
 npm-debug.log*
 AGENTS.md
+DEMO_CLI_INTERACTIVE.md
