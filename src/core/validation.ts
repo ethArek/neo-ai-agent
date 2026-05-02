@@ -1,8 +1,10 @@
 import { wallet as neoWallet } from "@cityofzion/neon-js";
+import { getAddress, isAddress } from "viem";
 import { z } from "zod";
 
 const hex256Pattern = /^(0x)?[0-9a-fA-F]{64}$/;
 const hex160Pattern = /^(0x)?[0-9a-fA-F]{40}$/;
+const evmTransactionHashPattern = /^0x[0-9a-fA-F]{64}$/;
 const positiveDecimalPattern = /^(?:0|[1-9]\d*)(?:\.\d+)?$/;
 const neoNsNamePattern =
   /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*\.neo$/i;
@@ -41,6 +43,14 @@ export function isNeoN3Address(value: string): boolean {
   return neoWallet.isAddress(value);
 }
 
+export function isEvmAddress(value: string): boolean {
+  return isAddress(value.trim());
+}
+
+export function normalizeEvmAddress(value: string): string {
+  return getAddress(value.trim());
+}
+
 export function normalizeNeoNsName(value: string): string {
   return value.trim().toLowerCase();
 }
@@ -71,6 +81,23 @@ export const hash160Schema = z
   .min(1, "Hash160 value is required.")
   .refine((value) => isHash160(value), "Invalid 20-byte hash.")
   .transform((value) => normalizeHash160(value));
+
+export const evmAddressSchema = z
+  .string()
+  .trim()
+  .min(1, "EVM address is required.")
+  .refine((value) => isEvmAddress(value), "Invalid EVM address.")
+  .transform((value) => normalizeEvmAddress(value));
+
+export const evmTransactionHashSchema = z
+  .string()
+  .trim()
+  .min(1, "Transaction hash is required.")
+  .refine(
+    (value) => evmTransactionHashPattern.test(value),
+    "Invalid EVM transaction hash.",
+  )
+  .transform((value) => value.toLowerCase());
 
 export const neoN3AddressSchema = z
   .string()

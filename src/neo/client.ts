@@ -26,6 +26,7 @@ import {
   neoN3AddressOrNeoNsSchema,
   neoN3AddressSchema,
 } from "../core/validation";
+import { NeoXProvider } from "../neox/client";
 import { createBroadcastResult } from "./broadcast";
 import type {
   BlockReference,
@@ -39,6 +40,18 @@ import type {
   NeoN3TokenTransferInput,
   NeoN3TransferHistory,
   NeoN3UnclaimedGas,
+  NeoXBlockReference,
+  NeoXChainInfo,
+  NeoXContractCallInput,
+  NeoXContractCallResult,
+  NeoXContractWriteInput,
+  NeoXErc20Balance,
+  NeoXErc20Metadata,
+  NeoXErc20TransferInput,
+  NeoXErc721Owner,
+  NeoXNativeBalance,
+  NeoXNativeTransferInput,
+  NeoXNetwork,
   NeoNetwork,
   NeoProvider,
   NetworkAddressMap,
@@ -200,7 +213,7 @@ function isNeoN3StructuredArgument(
   );
 }
 
-export class NeoN3Provider implements NeoProvider {
+export class NeoN3Provider {
   private readonly config: AppConfig;
   private readonly neoN3RpcClient: InstanceType<typeof neoRpc.RPCClient>;
   private readonly neoN3Wallet?: InstanceType<typeof neoWallet.Account>;
@@ -2218,6 +2231,259 @@ export class NeoN3Provider implements NeoProvider {
   }
 }
 
+class CompositeNeoProvider implements NeoProvider {
+  private readonly neoN3: NeoN3Provider;
+  private readonly neoX: NeoXProvider;
+
+  public constructor(config: AppConfig) {
+    this.neoN3 = new NeoN3Provider(config);
+    this.neoX = new NeoXProvider(config);
+  }
+
+  public getImplementedNetworks(): NeoNetwork[] {
+    return ["neoN3", "neoX"];
+  }
+
+  public getDefaultNetwork(): NeoNetwork {
+    return "neoN3";
+  }
+
+  public getWalletAddresses(): NetworkAddressMap {
+    const addresses: NetworkAddressMap = {
+      ...this.neoN3.getWalletAddresses(),
+    };
+    const neoXAddress = this.neoX.getWalletAddress();
+
+    if (neoXAddress) {
+      addresses.neoX = neoXAddress;
+    }
+
+    return addresses;
+  }
+
+  public getWalletAddress(network: NeoNetwork): string | undefined {
+    if (network === "neoX") {
+      return this.neoX.getWalletAddress();
+    }
+
+    return this.neoN3.getWalletAddress(network);
+  }
+
+  public getNeoN3GasBalance(address: string): Promise<TokenBalance> {
+    return this.neoN3.getNeoN3GasBalance(address);
+  }
+
+  public getNeoN3UnclaimedGas(address: string): Promise<NeoN3UnclaimedGas> {
+    return this.neoN3.getNeoN3UnclaimedGas(address);
+  }
+
+  public getNeoN3TokenBalances(
+    address: string,
+    token?: string,
+  ): Promise<TokenBalance[]> {
+    return this.neoN3.getNeoN3TokenBalances(address, token);
+  }
+
+  public getNeoN3PortfolioOverview(
+    address: string,
+  ): Promise<NeoN3PortfolioOverview> {
+    return this.neoN3.getNeoN3PortfolioOverview(address);
+  }
+
+  public getNeoN3TransferHistory(input: {
+    address: string;
+    token?: string;
+    limit?: number;
+  }): Promise<NeoN3TransferHistory> {
+    return this.neoN3.getNeoN3TransferHistory(input);
+  }
+
+  public getTransaction(input: TransactionLookup): Promise<TransactionDetails> {
+    if (input.network === "neoX") {
+      return this.neoX
+        .getTransaction({ hash: input.hash })
+        .then((transaction) => ({
+          transaction:
+            typeof transaction === "object" && transaction !== null
+              ? (transaction as Record<string, unknown>)
+              : {
+                  transaction,
+                },
+          applicationLog: null,
+        }));
+    }
+
+    return this.neoN3.getTransaction(input);
+  }
+
+  public getTransactionStatus(
+    input: TransactionStatusLookup,
+  ): Promise<TransactionStatus> {
+    if (input.network === "neoX") {
+      return this.neoX.getTransactionStatus(input);
+    }
+
+    return this.neoN3.getTransactionStatus(input);
+  }
+
+  public getBlock(reference: BlockReference): Promise<unknown> {
+    if (reference.network === "neoX") {
+      return this.neoX.getBlock({
+        hash: reference.hash,
+        number:
+          reference.height === undefined ? undefined : String(reference.height),
+      });
+    }
+
+    return this.neoN3.getBlock(reference);
+  }
+
+  public resolveNeoN3TokenMetadata(token: string): Promise<TokenMetadata> {
+    return this.neoN3.resolveNeoN3TokenMetadata(token);
+  }
+
+  public invokeNeoN3Read(
+    contractHash: string,
+    operation: string,
+    args?: unknown[],
+  ): Promise<NeoN3ReadInvocationResult> {
+    return this.neoN3.invokeNeoN3Read(contractHash, operation, args);
+  }
+
+  public buildNeoN3ContractWrite(
+    input: NeoN3ContractWriteInput,
+  ): Promise<PreparedTransaction> {
+    return this.neoN3.buildNeoN3ContractWrite(input);
+  }
+
+  public getNeoN3SwapQuote(
+    input: NeoN3SwapQuoteInput,
+  ): Promise<NeoN3SwapQuote> {
+    return this.neoN3.getNeoN3SwapQuote(input);
+  }
+
+  public prepareNeoN3GasTransfer(input: {
+    to: string;
+    amount: string;
+  }): Promise<PreparedTransaction> {
+    return this.neoN3.prepareNeoN3GasTransfer(input);
+  }
+
+  public prepareNeoN3TokenTransfer(
+    input: NeoN3TokenTransferInput,
+  ): Promise<PreparedTransaction> {
+    return this.neoN3.prepareNeoN3TokenTransfer(input);
+  }
+
+  public prepareNeoN3TokenSwap(
+    input: NeoN3TokenSwapInput,
+  ): Promise<PreparedTransaction> {
+    return this.neoN3.prepareNeoN3TokenSwap(input);
+  }
+
+  public getNeoXChainInfo(network?: NeoXNetwork): Promise<NeoXChainInfo> {
+    return this.neoX.getChainInfo(network);
+  }
+
+  public getNeoXNativeBalance(
+    address: string,
+    network?: NeoXNetwork,
+  ): Promise<NeoXNativeBalance> {
+    return this.neoX.getNativeBalance(address, network);
+  }
+
+  public getNeoXBlock(reference: NeoXBlockReference): Promise<unknown> {
+    return this.neoX.getBlock(reference);
+  }
+
+  public getNeoXTransaction(input: {
+    hash: string;
+    network?: NeoXNetwork;
+  }): Promise<unknown> {
+    return this.neoX.getTransaction(input);
+  }
+
+  public getNeoXTransactionReceipt(input: {
+    hash: string;
+    network?: NeoXNetwork;
+  }): Promise<unknown> {
+    return this.neoX.getTransactionReceipt(input);
+  }
+
+  public callNeoXContract(
+    input: NeoXContractCallInput,
+  ): Promise<NeoXContractCallResult> {
+    return this.neoX.callContract(input);
+  }
+
+  public getNeoXErc20Metadata(
+    tokenContract: string,
+    network?: NeoXNetwork,
+  ): Promise<NeoXErc20Metadata> {
+    return this.neoX.getErc20Metadata(tokenContract, network);
+  }
+
+  public getNeoXErc20Balance(input: {
+    tokenContract: string;
+    owner: string;
+    network?: NeoXNetwork;
+  }): Promise<NeoXErc20Balance> {
+    return this.neoX.getErc20Balance(input);
+  }
+
+  public getNeoXErc721Owner(input: {
+    contractAddress: string;
+    tokenId: string;
+    network?: NeoXNetwork;
+  }): Promise<NeoXErc721Owner> {
+    return this.neoX.getErc721Owner(input);
+  }
+
+  public prepareNeoXNativeTransfer(
+    input: NeoXNativeTransferInput,
+  ): Promise<PreparedTransaction> {
+    return this.neoX.prepareNativeTransfer(input);
+  }
+
+  public prepareNeoXErc20Transfer(
+    input: NeoXErc20TransferInput,
+  ): Promise<PreparedTransaction> {
+    return this.neoX.prepareErc20Transfer(input);
+  }
+
+  public prepareNeoXContractWrite(
+    input: NeoXContractWriteInput,
+  ): Promise<PreparedTransaction> {
+    return this.neoX.prepareContractWrite(input);
+  }
+
+  public signAndBroadcast(
+    prepared: PreparedTransaction,
+  ): Promise<BroadcastResult> {
+    if (prepared.network === "neoX") {
+      return this.neoX.signAndBroadcast(prepared);
+    }
+
+    return this.neoN3.signAndBroadcast(prepared);
+  }
+
+  public walletEnabled(network?: NeoNetwork): boolean {
+    if (network === "neoX") {
+      return this.neoX.walletEnabled();
+    }
+
+    if (network === "neoN3") {
+      return this.neoN3.walletEnabled(network);
+    }
+
+    return this.neoN3.walletEnabled("neoN3") || this.neoX.walletEnabled();
+  }
+
+  public checkReadiness(): Promise<ProviderReadiness> {
+    return this.neoN3.checkReadiness();
+  }
+}
+
 export function createNeoProvider(config: AppConfig): NeoProvider {
-  return new NeoN3Provider(config);
+  return new CompositeNeoProvider(config);
 }
