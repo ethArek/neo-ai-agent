@@ -392,7 +392,7 @@ export class AgentRuntime {
         sessionId,
         message:
           plan.explanation ??
-          "I could not map that request to a supported Neo action. Neo N3 is implemented now, and Neo X is reserved for future support.",
+          "I could not map that request to a supported Neo action. Try a Neo N3 request, a Neo X EVM request, or clarify which chain you want to use.",
         tool: null,
         arguments: plan.arguments,
         result: null,
@@ -520,6 +520,25 @@ export class AgentRuntime {
       return 'I need amount, fromToken, and toToken to run the Neo N3 Flamingo swap flow. Reply with something like "swap 1 GAS for FUSD".';
     }
 
+    if (
+      plan.tool === "neox_get_native_balance" &&
+      plan.missingInputs.length === 1 &&
+      plan.missingInputs[0] === "address"
+    ) {
+      return "I need a Neo X 0x address to check the native GAS balance.";
+    }
+
+    if (
+      plan.tool === "neox_get_erc20_balance" &&
+      plan.missingInputs.length > 0
+    ) {
+      return "I need a Neo X token contract and owner 0x address to check an ERC-20 balance.";
+    }
+
+    if (plan.tool === "neox_call_contract" && plan.missingInputs.length > 0) {
+      return "I need a Neo X contract address, ABI or function signature, and functionName to call a Solidity contract.";
+    }
+
     return `I need ${missingInputs} to run ${plan.tool}.`;
   }
 
@@ -565,6 +584,17 @@ export class AgentRuntime {
         neoN3Recipient
       ) {
         mergedArguments.to = neoN3Recipient;
+        remainingInputs.delete(inputName);
+        continue;
+      }
+
+      if (
+        inputName === "to" &&
+        this.acceptsNeoXRecipient(draftAction.tool) &&
+        resolvedAddress &&
+        /^0x[a-fA-F0-9]{40}$/.test(resolvedAddress)
+      ) {
+        mergedArguments.to = resolvedAddress;
         remainingInputs.delete(inputName);
         continue;
       }
@@ -644,6 +674,13 @@ export class AgentRuntime {
     return tool === "sendNeoN3Gas" || tool === "sendNeoN3Token";
   }
 
+  private acceptsNeoXRecipient(tool: ToolName): boolean {
+    return (
+      tool === "neox_prepare_native_transfer" ||
+      tool === "neox_prepare_erc20_transfer"
+    );
+  }
+
   private hydratePlanWithSessionContext(
     plan: PlannerAction,
     message: string,
@@ -686,7 +723,8 @@ export class AgentRuntime {
       tool === "getNeoN3TokenBalances" ||
       tool === "getNeoN3UnclaimedGas" ||
       tool === "getNeoN3TransferHistory" ||
-      tool === "getRecentActions"
+      tool === "getRecentActions" ||
+      tool === "neox_get_native_balance"
     );
   }
 
@@ -704,7 +742,9 @@ export class AgentRuntime {
     const addressFromArguments =
       typeof argumentsPayload.address === "string"
         ? argumentsPayload.address
-        : undefined;
+        : typeof argumentsPayload.owner === "string"
+          ? argumentsPayload.owner
+          : undefined;
 
     if (addressFromArguments && this.shouldRememberAddressFromTool(tool)) {
       this.sessions.rememberAddress(
@@ -732,7 +772,9 @@ export class AgentRuntime {
       tool === "getNeoN3PortfolioOverview" ||
       tool === "getNeoN3TokenBalances" ||
       tool === "getNeoN3UnclaimedGas" ||
-      tool === "getNeoN3TransferHistory"
+      tool === "getNeoN3TransferHistory" ||
+      tool === "neox_get_native_balance" ||
+      tool === "neox_get_erc20_balance"
     );
   }
 
@@ -955,6 +997,10 @@ export class AgentRuntime {
       return undefined;
     }
 
+    if (broadcast.network !== "neoN3") {
+      return undefined;
+    }
+
     const address = prepared?.sender ?? broadcast.sender;
     const requestedTokens = this.collectObservedTokenSymbols(prepared);
 
@@ -1097,6 +1143,10 @@ export class AgentRuntime {
       case "sendNeoN3Gas":
       case "sendNeoN3Token":
         return "Transfer submitted. Tracking on-chain confirmation...";
+      case "neox_prepare_native_transfer":
+      case "neox_prepare_erc20_transfer":
+      case "neox_prepare_contract_write":
+        return "Neo X transaction submitted. Tracking EVM receipt...";
       default:
         return "Transaction submitted. Tracking on-chain confirmation...";
     }
