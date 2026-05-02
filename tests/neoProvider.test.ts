@@ -43,6 +43,27 @@ function createConfig(n3WalletPrivateKey: string): AppConfig {
       tokenMap: {},
       flamingoPairs: [],
     },
+    neoX: {
+      defaultNetwork: "testnet",
+      nativeCurrencySymbol: "GAS",
+      walletPrivateKey: undefined,
+      walletEnabled: false,
+      networks: {
+        mainnet: {
+          name: "mainnet",
+          chainId: 47763,
+          rpcUrl: "https://neox-mainnet.example.com",
+        },
+        testnet: {
+          name: "testnet",
+          chainId: 12_227_332,
+          rpcUrl: "https://neox-testnet.example.com",
+        },
+        custom: {
+          name: "custom",
+        },
+      },
+    },
     openAiModel: "gpt-5-mini",
     geminiModel: "gemini-2.5-flash",
     walletEnabled: true,
@@ -303,11 +324,11 @@ describe("NeoProvider", () => {
     jest.restoreAllMocks();
   });
 
-  it("reports Neo N3 as the only implemented network for now", () => {
+  it("reports Neo N3 and Neo X as implemented networks", () => {
     const account = new neoWallet.Account();
     const provider = createNeoProvider(createConfig(account.WIF));
 
-    expect(provider.getImplementedNetworks()).toEqual(["neoN3"]);
+    expect(provider.getImplementedNetworks()).toEqual(["neoN3", "neoX"]);
     expect(provider.getDefaultNetwork()).toBe("neoN3");
     expect(provider.getWalletAddresses()).toEqual({
       neoN3: account.address,
@@ -564,9 +585,8 @@ describe("NeoProvider", () => {
 
   it("falls back to the portfolio overview when the TokenTracker RPC plugin is unavailable", async () => {
     const account = new neoWallet.Account();
-    const provider = createNeoProvider(createConfig(account.WIF));
     const portfolioSpy = jest
-      .spyOn(provider, "getNeoN3PortfolioOverview")
+      .spyOn(NeoN3Provider.prototype, "getNeoN3PortfolioOverview")
       .mockResolvedValue({
         address: account.address,
         gasBalance: {
@@ -596,6 +616,7 @@ describe("NeoProvider", () => {
           },
         ],
       });
+    const provider = createNeoProvider(createConfig(account.WIF));
 
     jest
       .spyOn(neoRpc.RPCClient.prototype, "getNep17Balances")

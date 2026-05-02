@@ -512,15 +512,50 @@ describe("AgentRuntime", () => {
     });
   });
 
-  it("reports Neo X as planned but not yet implemented", async () => {
+  it("loads a Neo X native GAS balance from a natural-language request", async () => {
     const provider = new FakeNeoProvider();
+    const balanceSpy = jest.spyOn(provider, "getNeoXNativeBalance");
     const runtime = createRuntime(provider);
 
-    const response = await runtime.handleMessage("show my Neo X address");
+    const response = await runtime.handleMessage("check GAS balance on Neo X");
 
-    expect(response.tool).toBeNull();
+    expect(response.tool).toBe("neox_get_native_balance");
     expect(response.requiresConfirmation).toBe(false);
-    expect(response.message).toContain("Neo X support is planned");
+    expect(balanceSpy).toHaveBeenCalledWith(provider.neoXAddress, undefined);
+    expect(response.message).toContain("Neo X");
+    expect(response.result).toMatchObject({
+      owner: provider.neoXAddress,
+      balance: "1.23",
+    });
+  });
+
+  it("prepares and confirms a Neo X native GAS transfer", async () => {
+    const provider = new FakeNeoProvider();
+    const prepareSpy = jest.spyOn(provider, "prepareNeoXNativeTransfer");
+    const signSpy = jest.spyOn(provider, "signAndBroadcast");
+    const runtime = createRuntime(provider);
+
+    const prepared = await runtime.handleMessage(
+      `prepare 1 GAS on Neo X to ${provider.neoXRecipientAddress}`,
+    );
+
+    expect(prepared.tool).toBe("neox_prepare_native_transfer");
+    expect(prepared.requiresConfirmation).toBe(true);
+    expect(prepareSpy).toHaveBeenCalledWith({
+      amount: "1",
+      to: provider.neoXRecipientAddress,
+      network: undefined,
+    });
+
+    const confirmed = await runtime.handleMessage(
+      "Confirm",
+      prepared.sessionId,
+    );
+
+    expect(signSpy).toHaveBeenCalledTimes(1);
+    expect(confirmed.requiresConfirmation).toBe(false);
+    expect(confirmed.message).toContain("Submitted a Neo X");
+    expect(confirmed.message).toContain(provider.latestNeoXTxHash);
   });
 
   it("refuses to auto-confirm a pending action when the LLM returns confirm_action for a non-confirm message", async () => {

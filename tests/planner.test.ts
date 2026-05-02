@@ -261,17 +261,86 @@ describe("PlannerService", () => {
     expect(plan.intent).toBe("unknown");
   });
 
-  it("keeps explicit Neo X requests unsupported until that network is implemented", async () => {
+  it("routes a Neo X GAS balance request to the native balance tool", async () => {
     const plan = await createPlanner().plan(
-      "show my Neo X address",
+      "check GAS balance on Neo X",
       createContext({
         walletEnabled: true,
+        walletAddresses: {
+          neoX: "0xAA00000000000000000000000000000000000001",
+        },
+        implementedNetworks: ["neoN3", "neoX"],
+      }),
+    );
+
+    expect(plan.tool).toBe("neox_get_native_balance");
+    expect(plan.arguments).toMatchObject({
+      address: "0xAA00000000000000000000000000000000000001",
+    });
+  });
+
+  it("routes a Neo X ERC-20 balance request to the ERC-20 balance tool", async () => {
+    const plan = await createPlanner().plan(
+      "check ERC20 balance on Neo X",
+      createContext({
+        implementedNetworks: ["neoN3", "neoX"],
+      }),
+    );
+
+    expect(plan.tool).toBe("neox_get_erc20_balance");
+    expect(plan.missingInputs).toEqual(["tokenContract", "owner"]);
+  });
+
+  it("routes a Neo X Solidity contract call to the contract call tool", async () => {
+    const plan = await createPlanner().plan(
+      "call this Solidity contract on Neo X",
+      createContext({
+        implementedNetworks: ["neoN3", "neoX"],
+      }),
+    );
+
+    expect(plan.tool).toBe("neox_call_contract");
+    expect(plan.missingInputs).toEqual([
+      "contractAddress",
+      "functionName",
+      "abi",
+    ]);
+  });
+
+  it("keeps NEP-17 balance requests on Neo N3", async () => {
+    const plan = await createPlanner().plan(
+      "check NEP-17 balance on Neo N3",
+      createContext({
+        walletAddress: neoN3Address,
+        walletAddresses: {
+          neoN3: neoN3Address,
+        },
+        implementedNetworks: ["neoN3", "neoX"],
+      }),
+    );
+
+    expect(plan.tool).toBe("getNeoN3TokenBalances");
+    expect(plan.arguments).toMatchObject({
+      address: neoN3Address,
+    });
+  });
+
+  it("asks for clarification when a Neo balance request is ambiguous", async () => {
+    const plan = await createPlanner().plan(
+      "check my Neo balance",
+      createContext({
+        walletAddress: neoN3Address,
+        walletAddresses: {
+          neoN3: neoN3Address,
+          neoX: "0xAA00000000000000000000000000000000000001",
+        },
+        implementedNetworks: ["neoN3", "neoX"],
       }),
     );
 
     expect(plan.tool).toBeNull();
-    expect(plan.intent).toBe("unsupported_network");
-    expect(plan.explanation).toContain("Neo X support is planned");
+    expect(plan.intent).toBe("clarify_neo_network");
+    expect(plan.explanation).toContain("Neo N3 or Neo X");
   });
 
   it("ignores provider confirmation intents unless the raw user message is an explicit confirm phrase", async () => {

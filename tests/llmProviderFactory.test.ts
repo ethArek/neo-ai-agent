@@ -30,6 +30,27 @@ function createConfig(overrides: Partial<AppConfig> = {}): AppConfig {
       tokenMap: {},
       flamingoPairs: [],
     },
+    neoX: {
+      defaultNetwork: "testnet",
+      nativeCurrencySymbol: "GAS",
+      walletPrivateKey: undefined,
+      walletEnabled: false,
+      networks: {
+        mainnet: {
+          name: "mainnet",
+          chainId: 47763,
+          rpcUrl: "https://neox-mainnet.example.com",
+        },
+        testnet: {
+          name: "testnet",
+          chainId: 12_227_332,
+          rpcUrl: "https://neox-testnet.example.com",
+        },
+        custom: {
+          name: "custom",
+        },
+      },
+    },
     llmProvider: undefined,
     openAiApiKey: undefined,
     openAiModel: "gpt-5-mini",
