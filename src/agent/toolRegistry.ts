@@ -10,6 +10,20 @@ import { getRecentActionsTool } from "../tools/getRecentActions";
 import { getTransactionTool } from "../tools/getTransaction";
 import { getWalletAddressTool } from "../tools/getWalletAddress";
 import { invokeNeoN3ReadTool } from "../tools/invokeNeoN3Read";
+import {
+  neoXCallContractTool,
+  neoXGetBlockTool,
+  neoXGetChainInfoTool,
+  neoXGetErc20BalanceTool,
+  neoXGetErc20MetadataTool,
+  neoXGetErc721OwnerTool,
+  neoXGetNativeBalanceTool,
+  neoXGetTransactionReceiptTool,
+  neoXGetTransactionTool,
+  neoXPrepareContractWriteTool,
+  neoXPrepareErc20TransferTool,
+  neoXPrepareNativeTransferTool,
+} from "../tools/neoXTools";
 import { prepareNeoN3ContractWriteTool } from "../tools/prepareNeoN3ContractWrite";
 import { sendNeoN3GasTool } from "../tools/sendNeoN3Gas";
 import { sendNeoN3TokenTool } from "../tools/sendNeoN3Token";
@@ -32,6 +46,18 @@ const allTools = [
   sendNeoN3GasTool,
   sendNeoN3TokenTool,
   swapNeoN3TokenTool,
+  neoXGetChainInfoTool,
+  neoXGetNativeBalanceTool,
+  neoXGetBlockTool,
+  neoXGetTransactionTool,
+  neoXGetTransactionReceiptTool,
+  neoXCallContractTool,
+  neoXGetErc20BalanceTool,
+  neoXGetErc20MetadataTool,
+  neoXGetErc721OwnerTool,
+  neoXPrepareNativeTransferTool,
+  neoXPrepareErc20TransferTool,
+  neoXPrepareContractWriteTool,
 ] satisfies ToolDefinition[];
 
 export class ToolRegistry {
