@@ -6,6 +6,8 @@ import type { AgentProgressUpdate, AgentRuntime } from "../agent/runtime";
 import type { ToolName } from "../agent/types";
 import { toolNames } from "../agent/types";
 import { serializeError } from "../core/errors";
+import { formatNetworkLabel } from "../core/formatting";
+import type { NeoNetwork } from "../neo/types";
 import {
   buildConfirmationGuidance,
   type ConfirmationMode,
@@ -206,14 +208,76 @@ function resolveNeoN3NetworkFromMagic(
 
 function buildCliNetworkStatus(
   readiness: Awaited<ReturnType<AgentRuntime["getReadinessStatus"]>>,
-): CliNetworkStatus {
-  return {
-    network:
-      resolveNeoN3NetworkFromMagic(readiness.neo.networkMagic) ??
-      readiness.neo.configuredNetwork,
-    configuredNetwork: readiness.neo.configuredNetwork,
-    matchesConfiguration: readiness.neo.networkMatchesConfiguration,
-  };
+): CliNetworkStatus[] {
+  return [
+    {
+      chainLabel: "Neo N3",
+      network:
+        resolveNeoN3NetworkFromMagic(readiness.neoN3.networkMagic) ??
+        readiness.neoN3.configuredNetwork,
+      configuredNetwork: readiness.neoN3.configuredNetwork,
+      enabled: readiness.neoN3.enabled,
+      rpcReachable: readiness.neoN3.rpcReachable,
+      matchesConfiguration: readiness.neoN3.networkMatchesConfiguration,
+    },
+    {
+      chainLabel: "Neo X",
+      network: readiness.neoX.configuredNetwork,
+      configuredNetwork: readiness.neoX.configuredNetwork,
+      enabled: readiness.neoX.enabled,
+      rpcReachable: readiness.neoX.rpcReachable,
+      matchesConfiguration: readiness.neoX.networkMatchesConfiguration,
+    },
+  ];
+}
+
+function parseInteractiveNetworkChoice(
+  choice: string,
+): NeoNetwork | "exit" | undefined {
+  const normalizedChoice = choice.trim().toLowerCase();
+
+  if (/^(exit|quit)$/.test(normalizedChoice)) {
+    return "exit";
+  }
+
+  if (
+    normalizedChoice === "" ||
+    /^(1|n3|neo\s*n3|neo-n3)$/.test(normalizedChoice)
+  ) {
+    return "neoN3";
+  }
+
+  if (/^(2|x|neo\s*x|neox|neo-x)$/.test(normalizedChoice)) {
+    return "neoX";
+  }
+
+  return undefined;
+}
+
+async function askForInteractiveNetwork(
+  readline: ReturnType<typeof createInterface>,
+  theme: ReturnType<typeof createCliTheme>,
+): Promise<NeoNetwork | undefined> {
+  while (true) {
+    const answer = await readline.question(
+      theme.renderMuted(
+        "Choose active chain [1] Neo N3 / [2] Neo X (Enter = Neo N3): ",
+      ),
+    );
+    const selectedNetwork = parseInteractiveNetworkChoice(answer);
+
+    if (selectedNetwork === "exit") {
+      return undefined;
+    }
+
+    if (selectedNetwork) {
+      return selectedNetwork;
+    }
+
+    output.write(
+      `${theme.renderError("Choose 1 for Neo N3, 2 for Neo X, or type exit.")}\n`,
+    );
+  }
 }
 
 async function runInteractive(
@@ -229,9 +293,9 @@ async function runInteractive(
   try {
     const readiness = await runtime.getReadinessStatus();
 
-    networkStatusLine = theme.renderNetworkStatus(
-      buildCliNetworkStatus(readiness),
-    );
+    networkStatusLine = buildCliNetworkStatus(readiness)
+      .map((status) => theme.renderNetworkStatus(status))
+      .join("\n");
   } catch {
     // Keep interactive mode usable even if the readiness probe fails.
   }
@@ -250,6 +314,17 @@ async function runInteractive(
   );
 
   try {
+    const selectedNetwork = await askForInteractiveNetwork(readline, theme);
+
+    if (!selectedNetwork) {
+      return;
+    }
+
+    sessionId = runtime.startSession(selectedNetwork);
+    output.write(
+      `${theme.renderSuccess(`Active chain: ${formatNetworkLabel(selectedNetwork)}. Mention Neo N3 or Neo X in a prompt to switch.`)}\n`,
+    );
+
     while (!done) {
       const line = (await readline.question(theme.renderPrompt())).trim();
 

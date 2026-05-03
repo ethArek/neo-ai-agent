@@ -512,15 +512,146 @@ describe("AgentRuntime", () => {
     });
   });
 
-  it("reports Neo X as planned but not yet implemented", async () => {
+  it("loads a Neo X native GAS balance from a natural-language request", async () => {
+    const provider = new FakeNeoProvider();
+    const balanceSpy = jest.spyOn(provider, "getNeoXNativeBalance");
+    const runtime = createRuntime(provider);
+
+    const response = await runtime.handleMessage("check GAS balance on Neo X");
+
+    expect(response.tool).toBe("neox_get_native_balance");
+    expect(response.requiresConfirmation).toBe(false);
+    expect(balanceSpy).toHaveBeenCalledWith(provider.neoXAddress, undefined);
+    expect(response.message).toContain("Neo X");
+    expect(response.result).toMatchObject({
+      owner: provider.neoXAddress,
+      balance: "1.23",
+    });
+  });
+
+  it("loads the Neo X wallet address from a natural-language request", async () => {
     const provider = new FakeNeoProvider();
     const runtime = createRuntime(provider);
 
-    const response = await runtime.handleMessage("show my Neo X address");
+    const response = await runtime.handleMessage("show my address on Neo X");
 
-    expect(response.tool).toBeNull();
-    expect(response.requiresConfirmation).toBe(false);
-    expect(response.message).toContain("Neo X support is planned");
+    expect(response.tool).toBe("getWalletAddress");
+    expect(response.message).toContain(provider.neoXAddress);
+    expect(response.result).toMatchObject({
+      address: provider.neoXAddress,
+      network: "neoX",
+    });
+  });
+
+  it("uses the selected Neo X chain for generic wallet and balance prompts", async () => {
+    const provider = new FakeNeoProvider();
+    const balanceSpy = jest.spyOn(provider, "getNeoXNativeBalance");
+    const runtime = createRuntime(provider);
+    const sessionId = runtime.startSession("neoX");
+
+    const addressResponse = await runtime.handleMessage(
+      "show my address",
+      sessionId,
+    );
+    const balanceResponse = await runtime.handleMessage(
+      "check GAS balance",
+      sessionId,
+    );
+
+    expect(addressResponse.tool).toBe("getWalletAddress");
+    expect(addressResponse.result).toMatchObject({
+      address: provider.neoXAddress,
+      network: "neoX",
+    });
+    expect(balanceResponse.tool).toBe("neox_get_native_balance");
+    expect(balanceSpy).toHaveBeenCalledWith(provider.neoXAddress, undefined);
+  });
+
+  it("switches the active chain when a prompt explicitly names Neo X", async () => {
+    const provider = new FakeNeoProvider();
+    const runtime = createRuntime(provider);
+
+    const firstResponse = await runtime.handleMessage("show my address");
+    const switchedResponse = await runtime.handleMessage(
+      "show my address on Neo X",
+      firstResponse.sessionId,
+    );
+    const followUpResponse = await runtime.handleMessage(
+      "show my address",
+      firstResponse.sessionId,
+    );
+
+    expect(switchedResponse.result).toMatchObject({
+      address: provider.neoXAddress,
+      network: "neoX",
+    });
+    expect(followUpResponse.result).toMatchObject({
+      address: provider.neoXAddress,
+      network: "neoX",
+    });
+  });
+
+  it("uses the resolved Neo X network name in block tool messages", async () => {
+    const provider = new FakeNeoProvider();
+    const runtime = createRuntime(provider);
+
+    const response = await runtime.executeTool({
+      tool: "neox_get_block",
+      arguments: {
+        tag: "latest",
+      },
+    });
+
+    expect(response.message).toBe("Loaded Neo X testnet block latest.");
+  });
+
+  it("prepares and confirms a Neo X native GAS transfer", async () => {
+    const provider = new FakeNeoProvider();
+    const prepareSpy = jest.spyOn(provider, "prepareNeoXNativeTransfer");
+    const signSpy = jest.spyOn(provider, "signAndBroadcast");
+    const statusSpy = jest.spyOn(provider, "getTransactionStatus");
+    const runtime = createRuntime(provider);
+
+    const prepared = await runtime.handleMessage(
+      `prepare 1 GAS on Neo X testnet to ${provider.neoXRecipientAddress}`,
+    );
+
+    expect(prepared.tool).toBe("neox_prepare_native_transfer");
+    expect(prepared.requiresConfirmation).toBe(true);
+    expect(prepareSpy).toHaveBeenCalledWith({
+      amount: "1",
+      to: provider.neoXRecipientAddress,
+      network: "testnet",
+    });
+
+    const confirmed = await runtime.handleMessage(
+      "Confirm",
+      prepared.sessionId,
+    );
+
+    expect(signSpy).toHaveBeenCalledTimes(1);
+    expect(statusSpy).toHaveBeenCalledWith({
+      hash: provider.latestNeoXTxHash,
+      network: "neoX",
+      rpcNetwork: "testnet",
+    });
+    expect(confirmed.requiresConfirmation).toBe(false);
+    expect(confirmed.message).toContain("Submitted a Neo X");
+    expect(confirmed.message).toContain(provider.latestNeoXTxHash);
+
+    statusSpy.mockClear();
+
+    const status = await runtime.handleMessage(
+      "check the status of my last transaction",
+      prepared.sessionId,
+    );
+
+    expect(status.tool).toBe("getLastTransactionStatus");
+    expect(statusSpy).toHaveBeenLastCalledWith({
+      hash: provider.latestNeoXTxHash,
+      network: "neoX",
+      rpcNetwork: "testnet",
+    });
   });
 
   it("refuses to auto-confirm a pending action when the LLM returns confirm_action for a non-confirm message", async () => {

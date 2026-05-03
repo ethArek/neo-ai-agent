@@ -14,6 +14,9 @@ const defaultNeoN3MainnetNnsContract =
   "0x50ac1c37690cc2cfc594472833cf57505d5f46de";
 const defaultNeoN3TestnetNnsContract =
   "0x538355b776538a5da0b2a08c139b9900b9c0cbb6";
+const defaultNeoXMainnetChainId = 47763;
+const defaultNeoXTestnetChainId = 12_227_332;
+const defaultNeoXNativeCurrencySymbol = "GAS";
 export const defaultNeoN3FlamingoContractsByNetwork = Object.freeze({
   mainnet: Object.freeze({
     broker: "0xec268e9c642b7d09d10fe658bcb1cc63c0895d4d",
@@ -280,6 +283,26 @@ const envSchema = z.object({
   NEO_N3_FLAMINGO_ROUTER_CONTRACT: optionalNonEmptyString,
   NEO_N3_TOKEN_MAP_JSON: hash160MapSchema,
   NEO_N3_FLAMINGO_PAIRS_JSON: stringTuplePairListSchema,
+  NEOX_MAINNET_RPC_URL: optionalNonEmptyString,
+  NEOX_TESTNET_RPC_URL: optionalNonEmptyString,
+  NEOX_CUSTOM_RPC_URL: optionalNonEmptyString,
+  NEOX_DEFAULT_NETWORK: z
+    .enum(["mainnet", "testnet", "custom"])
+    .default("mainnet"),
+  NEOX_EXPLORER_BASE_URL: optionalNonEmptyString,
+  NEOX_MAINNET_CHAIN_ID: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(defaultNeoXMainnetChainId),
+  NEOX_TESTNET_CHAIN_ID: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(defaultNeoXTestnetChainId),
+  NEOX_CUSTOM_CHAIN_ID: z.coerce.number().int().positive().optional(),
+  NEOX_PRIVATE_KEY: optionalNonEmptyString,
+  NEOX_WALLET_PRIVATE_KEY: optionalNonEmptyString,
 });
 
 export interface AppConfig {
@@ -305,6 +328,32 @@ export interface AppConfig {
     flamingoRouterContract?: string;
     tokenMap: Record<string, string>;
     flamingoPairs: Array<[string, string]>;
+  };
+  neoX: {
+    defaultNetwork: "mainnet" | "testnet" | "custom";
+    nativeCurrencySymbol: "GAS";
+    walletPrivateKey?: string;
+    walletEnabled: boolean;
+    networks: {
+      mainnet: {
+        name: "mainnet";
+        chainId: number;
+        rpcUrl?: string;
+        explorerBaseUrl?: string;
+      };
+      testnet: {
+        name: "testnet";
+        chainId: number;
+        rpcUrl?: string;
+        explorerBaseUrl?: string;
+      };
+      custom: {
+        name: "custom";
+        chainId?: number;
+        rpcUrl?: string;
+        explorerBaseUrl?: string;
+      };
+    };
   };
   llmProvider?: "openai" | "gemini";
   openAiApiKey?: string;
@@ -345,6 +394,38 @@ function parseOptionalNeoN3PrivateKey(
   throw new ValidationError(
     `${fieldName} must be a Neo N3 raw private key or WIF.`,
   );
+}
+
+function parseOptionalEvmPrivateKey(
+  value: string | undefined,
+  fieldName: string,
+): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  if (/^0x[0-9a-fA-F]{64}$/.test(value)) {
+    return value;
+  }
+
+  throw new ValidationError(
+    `${fieldName} must be a 0x-prefixed 32-byte EVM private key.`,
+  );
+}
+
+function parseOptionalUrl(
+  value: string | undefined,
+  fieldName: string,
+): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  try {
+    return z.string().url(`${fieldName} must be a valid URL.`).parse(value);
+  } catch {
+    throw new ValidationError(`${fieldName} must be a valid URL.`);
+  }
 }
 
 export function resolveLlmProviderSelection(input: {
@@ -424,6 +505,50 @@ export function loadConfig(): AppConfig {
           pair[0],
           pair[1],
         ]);
+  const neoXDefaultNetwork = env.NEOX_DEFAULT_NETWORK;
+  const neoXSelectedRpcUrl =
+    neoXDefaultNetwork === "mainnet"
+      ? env.NEOX_MAINNET_RPC_URL
+      : neoXDefaultNetwork === "testnet"
+        ? env.NEOX_TESTNET_RPC_URL
+        : env.NEOX_CUSTOM_RPC_URL;
+
+  if (process.env.NEOX_DEFAULT_NETWORK && !neoXSelectedRpcUrl) {
+    throw new ValidationError(
+      `NEOX_DEFAULT_NETWORK is set to ${neoXDefaultNetwork}, but the matching Neo X RPC URL is missing.`,
+    );
+  }
+
+  if (
+    neoXDefaultNetwork === "custom" &&
+    process.env.NEOX_DEFAULT_NETWORK &&
+    !env.NEOX_CUSTOM_CHAIN_ID
+  ) {
+    throw new ValidationError(
+      "NEOX_DEFAULT_NETWORK is set to custom, but NEOX_CUSTOM_CHAIN_ID is missing.",
+    );
+  }
+
+  const neoXWalletPrivateKey = parseOptionalEvmPrivateKey(
+    env.NEOX_PRIVATE_KEY ?? env.NEOX_WALLET_PRIVATE_KEY,
+    "NEOX_PRIVATE_KEY or NEOX_WALLET_PRIVATE_KEY",
+  );
+  const neoXMainnetRpcUrl = parseOptionalUrl(
+    env.NEOX_MAINNET_RPC_URL,
+    "NEOX_MAINNET_RPC_URL",
+  );
+  const neoXTestnetRpcUrl = parseOptionalUrl(
+    env.NEOX_TESTNET_RPC_URL,
+    "NEOX_TESTNET_RPC_URL",
+  );
+  const neoXCustomRpcUrl = parseOptionalUrl(
+    env.NEOX_CUSTOM_RPC_URL,
+    "NEOX_CUSTOM_RPC_URL",
+  );
+  const neoXExplorerBaseUrl = parseOptionalUrl(
+    env.NEOX_EXPLORER_BASE_URL,
+    "NEOX_EXPLORER_BASE_URL",
+  );
 
   return {
     port: env.PORT,
@@ -476,12 +601,38 @@ export function loadConfig(): AppConfig {
       tokenMap: configuredNeoN3TokenMap,
       flamingoPairs: configuredNeoN3FlamingoPairs,
     },
+    neoX: {
+      defaultNetwork: neoXDefaultNetwork,
+      nativeCurrencySymbol: defaultNeoXNativeCurrencySymbol,
+      walletPrivateKey: neoXWalletPrivateKey,
+      walletEnabled: Boolean(neoXWalletPrivateKey),
+      networks: {
+        mainnet: {
+          name: "mainnet",
+          chainId: env.NEOX_MAINNET_CHAIN_ID,
+          rpcUrl: neoXMainnetRpcUrl,
+          explorerBaseUrl: neoXExplorerBaseUrl,
+        },
+        testnet: {
+          name: "testnet",
+          chainId: env.NEOX_TESTNET_CHAIN_ID,
+          rpcUrl: neoXTestnetRpcUrl,
+          explorerBaseUrl: neoXExplorerBaseUrl,
+        },
+        custom: {
+          name: "custom",
+          chainId: env.NEOX_CUSTOM_CHAIN_ID,
+          rpcUrl: neoXCustomRpcUrl,
+          explorerBaseUrl: neoXExplorerBaseUrl,
+        },
+      },
+    },
     llmProvider,
     openAiApiKey: env.OPENAI_API_KEY,
     openAiModel: env.OPENAI_MODEL,
     geminiApiKey: env.GEMINI_API_KEY,
     geminiModel: env.GEMINI_MODEL,
-    walletEnabled: Boolean(neoN3WalletPrivateKey),
+    walletEnabled: Boolean(neoN3WalletPrivateKey || neoXWalletPrivateKey),
     llmEnabled: Boolean(llmProvider),
   };
 }

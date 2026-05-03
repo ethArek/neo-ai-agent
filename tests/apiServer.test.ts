@@ -6,6 +6,7 @@ import { AgentRuntime } from "../src/agent/runtime";
 import { SessionStore } from "../src/agent/sessionStore";
 import { ToolRegistry } from "../src/agent/toolRegistry";
 import { createApiServer } from "../src/api/server";
+import { AppError } from "../src/core/errors";
 import { FakeNeoProvider } from "./helpers/fakeNeoProvider";
 
 async function createTestServer() {
@@ -177,6 +178,71 @@ describe("REST API server", () => {
     }
   });
 
+  it("prepares and confirms a Neo X native GAS transfer through HTTP", async () => {
+    const setup = await createTestServer();
+    const prepareSpy = jest.spyOn(setup.provider, "prepareNeoXNativeTransfer");
+    const signSpy = jest.spyOn(setup.provider, "signAndBroadcast");
+
+    try {
+      const prepareResponse = await fetch(`${setup.baseUrl}/api/messages`, {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer test-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          message: `prepare 1 GAS on Neo X testnet to ${setup.provider.neoXRecipientAddress}`,
+        }),
+      });
+      const preparedPayload = (await prepareResponse.json()) as {
+        sessionId: string;
+        tool: string | null;
+        requiresConfirmation: boolean;
+        result: {
+          action: string;
+          rpcNetwork?: string;
+        };
+      };
+
+      expect(prepareResponse.status).toBe(200);
+      expect(preparedPayload.tool).toBe("neox_prepare_native_transfer");
+      expect(preparedPayload.requiresConfirmation).toBe(true);
+      expect(preparedPayload.result.action).toBe(
+        "neox_prepare_native_transfer",
+      );
+      expect(preparedPayload.result.rpcNetwork).toBe("testnet");
+      expect(prepareSpy).toHaveBeenCalledWith({
+        amount: "1",
+        to: setup.provider.neoXRecipientAddress,
+        network: "testnet",
+      });
+
+      const confirmResponse = await fetch(
+        `${setup.baseUrl}/api/sessions/${preparedPayload.sessionId}/confirm`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: "Bearer test-token",
+          },
+        },
+      );
+      const confirmedPayload = (await confirmResponse.json()) as {
+        message: string;
+        requiresConfirmation: boolean;
+      };
+
+      expect(confirmResponse.status).toBe(200);
+      expect(confirmedPayload.requiresConfirmation).toBe(false);
+      expect(confirmedPayload.message).toContain("Submitted a Neo X");
+      expect(confirmedPayload.message).toContain(
+        setup.provider.latestNeoXTxHash,
+      );
+      expect(signSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      await closeServer(setup.server);
+    }
+  });
+
   it("handles natural-language portfolio requests", async () => {
     const setup = await createTestServer();
 
@@ -313,6 +379,60 @@ describe("REST API server", () => {
     }
   });
 
+  it("sanitizes exposed RPC-like secrets in REST error responses", async () => {
+    const setup = await createTestServer();
+
+    jest
+      .spyOn(setup.provider, "getNeoN3PortfolioOverview")
+      .mockRejectedValueOnce(
+        new AppError(
+          "Upstream RPC failed for https://user:pass@example.com/path?api_key=secret",
+          {
+            code: "UPSTREAM_RPC_FAILURE",
+            statusCode: 502,
+            expose: true,
+            details: {
+              error:
+                "https://user:pass@example.com/path?api_key=secret&token=another-secret",
+            },
+          },
+        ),
+      );
+
+    try {
+      const response = await fetch(`${setup.baseUrl}/api/messages`, {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer test-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          message: "show my portfolio",
+        }),
+      });
+      const payload = (await response.json()) as {
+        error: {
+          code: string;
+          message: string;
+          details: {
+            error: string;
+          };
+        };
+      };
+
+      expect(response.status).toBe(502);
+      expect(payload.error.code).toBe("UPSTREAM_RPC_FAILURE");
+      expect(payload.error.message).toBe(
+        "Upstream RPC failed for https://********:********@example.com/path?api_key=********",
+      );
+      expect(payload.error.details.error).toBe(
+        "https://********:********@example.com/path?api_key=********&token=********",
+      );
+    } finally {
+      await closeServer(setup.server);
+    }
+  });
+
   it("serves public health, readiness, and metrics endpoints", async () => {
     const setup = await createTestServer();
 
@@ -324,7 +444,12 @@ describe("REST API server", () => {
       const readyResponse = await fetch(`${setup.baseUrl}/ready`);
       const readyPayload = (await readyResponse.json()) as {
         status: string;
-        neo: {
+        neoN3: {
+          rpcHost?: string;
+          rpcReachable: boolean;
+          networkMatchesConfiguration: boolean;
+        };
+        neoX: {
           rpcReachable: boolean;
           networkMatchesConfiguration: boolean;
         };
@@ -345,8 +470,12 @@ describe("REST API server", () => {
       expect(healthPayload.status).toBe("ok");
       expect(readyResponse.status).toBe(200);
       expect(readyPayload.status).toBe("ready");
-      expect(readyPayload.neo.rpcReachable).toBe(true);
-      expect(readyPayload.neo.networkMatchesConfiguration).toBe(true);
+      expect(readyPayload.neoN3.rpcReachable).toBe(true);
+      expect(readyPayload.neoN3.networkMatchesConfiguration).toBe(true);
+      expect(readyPayload.neoN3.rpcHost).toBe("n3.example.com");
+      expect(JSON.stringify(readyPayload)).not.toContain("https://");
+      expect(readyPayload.neoX.rpcReachable).toBe(true);
+      expect(readyPayload.neoX.networkMatchesConfiguration).toBe(true);
       expect(metricsResponse.status).toBe(200);
       expect(metricsPayload.api.total).toBeGreaterThanOrEqual(2);
       expect(
@@ -360,19 +489,87 @@ describe("REST API server", () => {
     }
   });
 
+  it("keeps readiness healthy when Neo X is not configured", async () => {
+    const setup = await createTestServer();
+    const readinessSpy = jest.spyOn(setup.provider, "checkReadiness");
+
+    readinessSpy.mockResolvedValueOnce({
+      neoN3: {
+        network: "neoN3",
+        enabled: true,
+        configuredNetwork: "mainnet",
+        rpcUrlAlias: "NEO_N3_RPC_URL",
+        rpcHost: "n3.example.com",
+        rpcReachable: true,
+        networkMagic: 860_833_102,
+        networkMatchesConfiguration: true,
+        walletEnabled: true,
+        walletAddress: setup.provider.neoN3Address,
+      },
+      neoX: {
+        network: "neoX",
+        enabled: false,
+        configuredNetwork: "mainnet",
+        rpcUrlAlias: "NEOX_MAINNET_RPC_URL",
+        rpcReachable: false,
+        configuredChainId: 47_763,
+        networkMatchesConfiguration: false,
+        walletEnabled: false,
+        reason: "Neo X mainnet RPC is not configured.",
+      },
+    });
+
+    try {
+      const response = await fetch(`${setup.baseUrl}/ready`);
+      const payload = (await response.json()) as {
+        status: string;
+        neoX: {
+          enabled: boolean;
+          rpcReachable: boolean;
+        };
+      };
+
+      expect(response.status).toBe(200);
+      expect(payload.status).toBe("ready");
+      expect(payload.neoX.enabled).toBe(false);
+      expect(payload.neoX.rpcReachable).toBe(false);
+    } finally {
+      await closeServer(setup.server);
+    }
+  });
+
   it("reports readiness failures when the Neo RPC network does not match configuration", async () => {
     const setup = await createTestServer();
     const readinessSpy = jest.spyOn(setup.provider, "checkReadiness");
 
     readinessSpy.mockResolvedValueOnce({
-      network: "neoN3",
-      configuredNetwork: "mainnet",
-      rpcUrl: "https://n3.example.com",
-      rpcReachable: true,
-      networkMagic: 894_710_606,
-      networkMatchesConfiguration: false,
-      walletEnabled: true,
-      walletAddress: setup.provider.neoN3Address,
+      neoN3: {
+        network: "neoN3",
+        enabled: true,
+        configuredNetwork: "mainnet",
+        rpcUrlAlias: "NEO_N3_RPC_URL",
+        rpcHost: "n3.example.com",
+        rpcReachable: true,
+        networkMagic: 894_710_606,
+        networkMatchesConfiguration: false,
+        walletEnabled: true,
+        walletAddress: setup.provider.neoN3Address,
+        reason:
+          "Configured Neo N3 mainnet network does not match the connected RPC network magic.",
+      },
+      neoX: {
+        network: "neoX",
+        enabled: true,
+        configuredNetwork: "testnet",
+        rpcUrlAlias: "NEOX_TESTNET_RPC_URL",
+        rpcHost: "x.example.com",
+        rpcReachable: true,
+        chainId: 12_227_332,
+        configuredChainId: 12_227_332,
+        networkMatchesConfiguration: true,
+        walletEnabled: true,
+        walletAddress: setup.provider.neoXAddress,
+      },
     });
 
     try {
@@ -380,12 +577,26 @@ describe("REST API server", () => {
       const payload = (await response.json()) as {
         error: {
           code: string;
+          details: {
+            reason: string;
+            readiness: {
+              neoN3: {
+                rpcHost?: string;
+              };
+            };
+          };
         };
       };
 
       expect(response.status).toBe(503);
       expect(response.headers.get("x-request-id")).toBeTruthy();
       expect(payload.error.code).toBe("NOT_READY");
+      expect(payload.error.details.reason).toContain(
+        "Configured Neo N3 mainnet network does not match",
+      );
+      expect(payload.error.details.readiness.neoN3.rpcHost).toBe(
+        "n3.example.com",
+      );
     } finally {
       await closeServer(setup.server);
     }

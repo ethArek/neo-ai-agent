@@ -8,9 +8,13 @@ import {
 import { LlmPlanningError } from "../core/errors";
 import { formatNetworkLabel } from "../core/formatting";
 import { logger } from "../core/logger";
-import { hash256Schema } from "../core/validation";
+import {
+  evmAddressSchema,
+  evmTransactionHashSchema,
+  hash256Schema,
+} from "../core/validation";
 import type { LlmProvider } from "../llm/provider";
-import type { NeoNetwork } from "../neo/types";
+import type { NeoNetwork, NeoXNetwork } from "../neo/types";
 import {
   createPlannerExecutionPolicy,
   isExplicitForceSwapRequest,
@@ -32,6 +36,8 @@ const plannerResponseSchema = z.object({
 });
 
 const contractHashPattern = /\b(0x[a-fA-F0-9]{40})\b/;
+const evmAddressPattern = /\b0x[a-fA-F0-9]{40}\b/;
+const evmHashPattern = /\b0x[a-fA-F0-9]{64}\b/;
 
 interface PlannerServiceOptions {
   tools: PlannerToolDescriptor[];
@@ -173,6 +179,31 @@ export class PlannerService {
       !this.isImplementedNetwork(requestedNetwork, context)
     ) {
       return this.createUnavailableNetworkPlan(requestedNetwork);
+    }
+
+    if (
+      this.shouldAskForNeoClarification(lowerMessage, requestedNetwork, context)
+    ) {
+      return {
+        intent: "clarify_neo_network",
+        tool: null,
+        arguments: {},
+        needsConfirmation: false,
+        missingInputs: ["network"],
+        explanation:
+          "Do you want to use Neo N3 or Neo X? Neo N3 uses Neo addresses, NEP-17 tokens, and script hashes. Neo X uses 0x EVM addresses, ERC-20/ERC-721 tokens, and Solidity contracts.",
+      };
+    }
+
+    if (
+      this.shouldRouteToNeoX(
+        trimmedMessage,
+        lowerMessage,
+        requestedNetwork,
+        context,
+      )
+    ) {
+      return this.createNeoXPlan(trimmedMessage, lowerMessage, context);
     }
 
     if (isSwapMessage) {
@@ -449,7 +480,9 @@ export class PlannerService {
 
     if (
       lowerMessage.includes("token balances") ||
+      lowerMessage.includes("token balance") ||
       lowerMessage.includes("nep-17 balances") ||
+      lowerMessage.includes("nep-17 balance") ||
       lowerMessage.includes("all balances")
     ) {
       const address = neoN3Recipient ?? neoN3WalletAddress;
@@ -550,10 +583,7 @@ export class PlannerService {
       };
     }
 
-    if (
-      /\bwallet address\b/.test(lowerMessage) ||
-      /\bmy\s+address\b/.test(lowerMessage)
-    ) {
+    if (this.isWalletAddressRequest(lowerMessage)) {
       return {
         intent: "get_wallet_address",
         tool: "getWalletAddress",
@@ -598,6 +628,482 @@ export class PlannerService {
     return this.tools.some((entry) => entry.name === tool);
   }
 
+  private shouldAskForNeoClarification(
+    message: string,
+    requestedNetwork: NeoNetwork | undefined,
+    context: PlannerContext,
+  ): boolean {
+    if (context.activeNetworkSelected) {
+      return false;
+    }
+
+    if (
+      !requestedNetwork &&
+      this.shouldClarifyAmbiguousContractAddress(message)
+    ) {
+      return true;
+    }
+
+    if (requestedNetwork || !/\bneo\b/.test(message)) {
+      return false;
+    }
+
+    if (this.hasNeoN3Keyword(message) || this.hasNeoXKeyword(message)) {
+      return false;
+    }
+
+    if (evmAddressPattern.test(message)) {
+      return false;
+    }
+
+    return /\b(?:balance|address|transfer|send|contract|transaction|tx|block|token|wallet)\b/.test(
+      message,
+    );
+  }
+
+  private shouldClarifyAmbiguousContractAddress(message: string): boolean {
+    if (!evmAddressPattern.test(message)) {
+      return false;
+    }
+
+    if (this.hasNeoN3Keyword(message) || this.hasNeoXKeyword(message)) {
+      return false;
+    }
+
+    if (/\b(?:call|read|invoke)\b/.test(message)) {
+      return true;
+    }
+
+    if (!/\b(?:prepare|write)\b/.test(message)) {
+      return false;
+    }
+
+    if (/\b(?:send|transfer)\b/.test(message)) {
+      return false;
+    }
+
+    if (/\b(?:contract|function|solidity)\b/.test(message)) {
+      return true;
+    }
+
+    const contractOperationMatch = message.match(
+      /\b(?:prepare|write)\s+([A-Za-z_$][A-Za-z0-9_$]*)\b/i,
+    );
+
+    return Boolean(
+      contractOperationMatch &&
+        !["this", "that", "the"].includes(
+          contractOperationMatch[1].toLowerCase(),
+        ),
+    );
+  }
+
+  private shouldRouteToNeoX(
+    message: string,
+    lowerMessage: string,
+    requestedNetwork: NeoNetwork | undefined,
+    context: PlannerContext,
+  ): boolean {
+    if (requestedNetwork === "neoX") {
+      return true;
+    }
+
+    if (requestedNetwork === "neoN3") {
+      return false;
+    }
+
+    if (this.hasNeoN3Keyword(lowerMessage)) {
+      return false;
+    }
+
+    if (this.isSessionHistoryRequest(lowerMessage)) {
+      return false;
+    }
+
+    if (
+      context.activeNetworkSelected &&
+      context.defaultNetwork === "neoX" &&
+      this.isDefaultNeoXRequest(lowerMessage)
+    ) {
+      return true;
+    }
+
+    return this.hasNeoXKeyword(lowerMessage) || evmAddressPattern.test(message);
+  }
+
+  private hasNeoXKeyword(message: string): boolean {
+    return (
+      /\bneo\s*x\b|\bneox\b|\bevm\s+on\s+neo\b/.test(message) ||
+      /\bsolidity\b|\berc-?20\b|\berc-?721\b|\bnft\b/.test(message) ||
+      /\b0x\s+address\b|\bevm\s+address\b|\bevm\s+contract\b/.test(message)
+    );
+  }
+
+  private hasNeoN3Keyword(message: string): boolean {
+    return (
+      /\bneo\s*n3\b|\bon\s+n3\b|\bn3\b|\bnep-?17\b/.test(message) ||
+      /\bscript\s+hash\b|\bneo\s+address\b|\bneos?\s+name\b|\bneons\b|\.neo\b/.test(
+        message,
+      )
+    );
+  }
+
+  private createNeoXPlan(
+    message: string,
+    lowerMessage: string,
+    context: PlannerContext,
+  ): PlannerAction {
+    const network = this.detectRequestedNeoXNetwork(lowerMessage);
+    const addresses = this.extractEvmAddresses(message);
+    const firstAddress = addresses[0];
+    const secondAddress = addresses[1];
+    const walletAddress = this.getWalletAddress(context, "neoX");
+    const transactionHash = this.extractEvmHash(message);
+
+    if (this.isWalletAddressRequest(lowerMessage)) {
+      return {
+        intent: "get_wallet_address",
+        tool: "getWalletAddress",
+        arguments: {
+          network: "neoX",
+        },
+        needsConfirmation: false,
+        missingInputs: [],
+        explanation: "Detected a Neo X wallet address request.",
+      };
+    }
+
+    if (/\breceipt\b/.test(lowerMessage) && transactionHash) {
+      return {
+        intent: "neox_get_transaction_receipt",
+        tool: "neox_get_transaction_receipt",
+        arguments: {
+          hash: transactionHash,
+          network,
+        },
+        needsConfirmation: false,
+        missingInputs: [],
+        explanation: "Detected a Neo X transaction receipt lookup.",
+      };
+    }
+
+    if (
+      transactionHash &&
+      /\b(?:transaction|tx)\b/.test(lowerMessage) &&
+      !/\breceipt\b/.test(lowerMessage)
+    ) {
+      return {
+        intent: "neox_get_transaction",
+        tool: "neox_get_transaction",
+        arguments: {
+          hash: transactionHash,
+          network,
+        },
+        needsConfirmation: false,
+        missingInputs: [],
+        explanation: "Detected a Neo X transaction lookup.",
+      };
+    }
+
+    if (
+      /\b(?:latest\s+block|block\s+latest)\b/.test(lowerMessage) ||
+      /\bchain\s+info\b/.test(lowerMessage)
+    ) {
+      return {
+        intent: "neox_get_chain_info",
+        tool: "neox_get_chain_info",
+        arguments: {
+          network,
+        },
+        needsConfirmation: false,
+        missingInputs: [],
+        explanation: "Detected a Neo X chain information request.",
+      };
+    }
+
+    const blockHashMatch = lowerMessage.match(
+      /\bblock\b.*(0x[a-fA-F0-9]{64})/i,
+    );
+    const blockNumberMatch = lowerMessage.match(/\bblock\b.*?(\d+)/i);
+
+    if (/\bblock\b/.test(lowerMessage)) {
+      return {
+        intent: "neox_get_block",
+        tool: "neox_get_block",
+        arguments: blockHashMatch
+          ? {
+              hash: evmTransactionHashSchema.parse(blockHashMatch[1]),
+              network,
+            }
+          : {
+              number: blockNumberMatch?.[1],
+              tag: blockNumberMatch ? undefined : "latest",
+              network,
+            },
+        needsConfirmation: false,
+        missingInputs: [],
+        explanation: "Detected a Neo X block lookup.",
+      };
+    }
+
+    if (
+      /\berc-?20\b/.test(lowerMessage) &&
+      /\b(?:metadata|symbol|decimals|name)\b/.test(lowerMessage)
+    ) {
+      return {
+        intent: "neox_get_erc20_metadata",
+        tool: "neox_get_erc20_metadata",
+        arguments: {
+          tokenContract: firstAddress,
+          network,
+        },
+        needsConfirmation: false,
+        missingInputs: firstAddress ? [] : ["tokenContract"],
+        explanation: "Detected a Neo X ERC-20 metadata request.",
+      };
+    }
+
+    if (/\berc-?20\b/.test(lowerMessage) && /\bbalance\b/.test(lowerMessage)) {
+      const tokenContract = this.extractAddressAfterLabel(message, [
+        "token",
+        "contract",
+      ]);
+      const owner =
+        this.extractAddressAfterLabel(message, ["owner", "wallet", "for"]) ??
+        (tokenContract && firstAddress === tokenContract
+          ? secondAddress
+          : firstAddress) ??
+        walletAddress;
+
+      return {
+        intent: "neox_get_erc20_balance",
+        tool: "neox_get_erc20_balance",
+        arguments: {
+          tokenContract: tokenContract ?? secondAddress,
+          owner,
+          network,
+        },
+        needsConfirmation: false,
+        missingInputs: [
+          (tokenContract ?? secondAddress) ? undefined : "tokenContract",
+          owner ? undefined : "owner",
+        ].filter((entry): entry is string => Boolean(entry)),
+        explanation: "Detected a Neo X ERC-20 balance request.",
+      };
+    }
+
+    if (
+      /\berc-?721\b|\bnft\b|\bownerof\b/.test(lowerMessage) &&
+      /\bowner\b|\bownerof\b/.test(lowerMessage)
+    ) {
+      const tokenId = this.extractTokenId(message);
+
+      return {
+        intent: "neox_get_erc721_owner",
+        tool: "neox_get_erc721_owner",
+        arguments: {
+          contractAddress: firstAddress,
+          tokenId,
+          network,
+        },
+        needsConfirmation: false,
+        missingInputs: [
+          firstAddress ? undefined : "contractAddress",
+          tokenId ? undefined : "tokenId",
+        ].filter((entry): entry is string => Boolean(entry)),
+        explanation: "Detected a Neo X ERC-721 owner lookup.",
+      };
+    }
+
+    const nativeTransferMatch = message.match(
+      /\b(?:prepare|send|transfer)\s+([0-9]+(?:\.[0-9]+)?)\s+gas\b/i,
+    );
+
+    if (nativeTransferMatch) {
+      return {
+        intent: "neox_prepare_native_transfer",
+        tool: "neox_prepare_native_transfer",
+        arguments: {
+          amount: nativeTransferMatch[1],
+          to: firstAddress,
+          network,
+        },
+        needsConfirmation: true,
+        missingInputs: firstAddress ? [] : ["to"],
+        explanation:
+          "Detected a Neo X native GAS transfer preparation request.",
+      };
+    }
+
+    const erc20TransferMatch = message.match(
+      /\b(?:prepare|send|transfer)\s+([0-9]+(?:\.[0-9]+)?)\s+(?:erc-?20|tokens?)\b/i,
+    );
+
+    if (erc20TransferMatch && /\berc-?20\b/.test(lowerMessage)) {
+      const tokenContract = this.extractAddressAfterLabel(message, [
+        "token",
+        "contract",
+      ]);
+      const to =
+        this.extractAddressAfterLabel(message, ["to", "recipient"]) ??
+        (tokenContract && firstAddress === tokenContract
+          ? secondAddress
+          : firstAddress);
+
+      return {
+        intent: "neox_prepare_erc20_transfer",
+        tool: "neox_prepare_erc20_transfer",
+        arguments: {
+          amount: erc20TransferMatch[1],
+          tokenContract: tokenContract ?? secondAddress,
+          to,
+          network,
+        },
+        needsConfirmation: true,
+        missingInputs: [
+          (tokenContract ?? secondAddress) ? undefined : "tokenContract",
+          to ? undefined : "to",
+        ].filter((entry): entry is string => Boolean(entry)),
+        explanation: "Detected a Neo X ERC-20 transfer preparation request.",
+      };
+    }
+
+    const contractOperationMatch = message.match(
+      /\b(?:call|read|invoke|prepare|write)\s+([A-Za-z_$][A-Za-z0-9_$]*)\b/i,
+    );
+    const contractFunctionName =
+      contractOperationMatch &&
+      !["this", "that", "the"].includes(contractOperationMatch[1].toLowerCase())
+        ? contractOperationMatch[1]
+        : undefined;
+    const isContractWrite =
+      /\b(?:prepare|write)\b/.test(lowerMessage) &&
+      /\b(?:contract|solidity|function)\b/.test(lowerMessage);
+
+    if (firstAddress && contractFunctionName && isContractWrite) {
+      return {
+        intent: "neox_prepare_contract_write",
+        tool: "neox_prepare_contract_write",
+        arguments: {
+          contractAddress: firstAddress,
+          functionName: contractFunctionName,
+          args: [],
+          network,
+        },
+        needsConfirmation: true,
+        missingInputs: ["abi"],
+        explanation: "Detected a Neo X contract write preparation request.",
+      };
+    }
+
+    if (
+      firstAddress &&
+      (contractFunctionName ||
+        /\b(?:solidity|contract|call)\b/.test(lowerMessage))
+    ) {
+      return {
+        intent: "neox_call_contract",
+        tool: "neox_call_contract",
+        arguments: {
+          contractAddress: firstAddress,
+          functionName: contractFunctionName,
+          args: [],
+          network,
+        },
+        needsConfirmation: false,
+        missingInputs: [
+          contractFunctionName ? undefined : "functionName",
+          "abi",
+        ].filter((entry): entry is string => Boolean(entry)),
+        explanation: "Detected a Neo X Solidity contract call.",
+      };
+    }
+
+    if (/\b(?:solidity|contract|call)\b/.test(lowerMessage)) {
+      return {
+        intent: "neox_call_contract",
+        tool: "neox_call_contract",
+        arguments: {
+          contractAddress: firstAddress,
+          functionName: contractFunctionName,
+          args: [],
+          network,
+        },
+        needsConfirmation: false,
+        missingInputs: [
+          firstAddress ? undefined : "contractAddress",
+          contractFunctionName ? undefined : "functionName",
+          "abi",
+        ].filter((entry): entry is string => Boolean(entry)),
+        explanation: "Detected a Neo X Solidity contract call.",
+      };
+    }
+
+    if (
+      (/\b(?:gas|native)\b/.test(lowerMessage) ||
+        (context.activeNetworkSelected && context.defaultNetwork === "neoX")) &&
+      /\bbalance\b/.test(lowerMessage)
+    ) {
+      const address = firstAddress ?? walletAddress;
+
+      return {
+        intent: "neox_get_native_balance",
+        tool: "neox_get_native_balance",
+        arguments: {
+          address,
+          network,
+        },
+        needsConfirmation: false,
+        missingInputs: address ? [] : ["address"],
+        explanation: "Detected a Neo X native GAS balance request.",
+      };
+    }
+
+    return {
+      intent: "neox_get_chain_info",
+      tool: "neox_get_chain_info",
+      arguments: {
+        network,
+      },
+      needsConfirmation: false,
+      missingInputs: [],
+      explanation: "Detected a generic Neo X request.",
+    };
+  }
+
+  private isWalletAddressRequest(message: string): boolean {
+    return (
+      /\bwallet address\b/.test(message) || /\bmy\s+address\b/.test(message)
+    );
+  }
+
+  private isDefaultNeoXRequest(message: string): boolean {
+    return /\b(?:address|balance|transfer|send|contract|transaction|tx|block|token|wallet)\b/.test(
+      message,
+    );
+  }
+
+  private isSessionHistoryRequest(message: string): boolean {
+    return (
+      /\bstatus\b.*\b(?:last|latest|most recent)\s+(?:transaction|tx)\b/.test(
+        message,
+      ) ||
+      /\b(?:last|latest|most recent)\s+(?:transaction|tx)\b.*\b(?:status|state|check|watch|track)\b/.test(
+        message,
+      ) ||
+      /\bwhat happened to (?:my )?(?:last|latest|most recent)\s+(?:transaction|tx)\b/.test(
+        message,
+      ) ||
+      /\b(?:recent|latest|last)\s+(?:actions|activity|transactions|txs)\b/.test(
+        message,
+      ) ||
+      /\bshow\b.*\b(?:recent|last)\b.*\b(?:actions|activity|transactions|txs)\b/.test(
+        message,
+      ) ||
+      /\b(?:activity|history)\b.*\b(?:transactions|txs|actions)\b/.test(message)
+    );
+  }
+
   private createUnavailableNetworkPlan(network: NeoNetwork): PlannerAction {
     return {
       intent: "unsupported_network",
@@ -622,15 +1128,90 @@ export class PlannerService {
   }
 
   private detectRequestedNetwork(message: string): NeoNetwork | undefined {
-    if (/\bneo\s*x\b|\bevm\b/.test(message)) {
+    if (this.hasNeoXKeyword(message) || /\bevm\b/.test(message)) {
       return "neoX";
     }
 
-    if (/\bneo\s*n3\b|\bon\s+n3\b|\bn3\b/.test(message)) {
+    if (this.hasNeoN3Keyword(message)) {
       return "neoN3";
     }
 
     return undefined;
+  }
+
+  private detectRequestedNeoXNetwork(message: string): NeoXNetwork | undefined {
+    if (/\btestnet\b|\bt4\b/.test(message)) {
+      return "testnet";
+    }
+
+    if (/\bmainnet\b/.test(message)) {
+      return "mainnet";
+    }
+
+    if (/\bcustom\b|\blocal\b|\bprivate\b/.test(message)) {
+      return "custom";
+    }
+
+    return undefined;
+  }
+
+  private extractEvmAddresses(message: string): string[] {
+    const matches = message.match(new RegExp(evmAddressPattern, "g")) ?? [];
+    const addresses: string[] = [];
+
+    for (const match of matches) {
+      const parsed = evmAddressSchema.safeParse(match);
+
+      if (
+        parsed.success &&
+        !addresses.some(
+          (address) => address.toLowerCase() === parsed.data.toLowerCase(),
+        )
+      ) {
+        addresses.push(parsed.data);
+      }
+    }
+
+    return addresses;
+  }
+
+  private extractEvmHash(message: string): string | undefined {
+    const match = message.match(evmHashPattern);
+
+    if (!match) {
+      return undefined;
+    }
+
+    return evmTransactionHashSchema.parse(match[0]);
+  }
+
+  private extractAddressAfterLabel(
+    message: string,
+    labels: string[],
+  ): string | undefined {
+    for (const label of labels) {
+      const escapedLabel = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const match = message.match(
+        new RegExp(
+          `\\b${escapedLabel}\\b\\s*(?:address|contract)?\\s*(?:is|=|:)?\\s*(0x[a-fA-F0-9]{40})`,
+          "i",
+        ),
+      );
+
+      if (match) {
+        return evmAddressSchema.parse(match[1]);
+      }
+    }
+
+    return undefined;
+  }
+
+  private extractTokenId(message: string): string | undefined {
+    const match =
+      message.match(/\btoken(?:id| id)?\s*(?:is|=|:)?\s*(\d+)\b/i) ??
+      message.match(/\bid\s*(?:is|=|:)?\s*(\d+)\b/i);
+
+    return match?.[1];
   }
 
   private isImplementedNetwork(

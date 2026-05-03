@@ -23,13 +23,13 @@ export const getWalletAddressTool: ToolDefinition<Input, WalletAddressResult> =
     description:
       "Return the currently loaded wallet address for a requested Neo network, when that network is implemented.",
     argumentsDescription: '{ "network"?: "neoN3 | neoX" }',
-    networks: ["neoN3"],
+    networks: ["neoN3", "neoX"],
     readOnly: true,
     dangerous: false,
     schema: inputSchema,
     async execute(input, context) {
       const parsed = inputSchema.parse(input);
-      const network = parsed.network ?? context.neo.getDefaultNetwork();
+      const network = parsed.network ?? context.session.defaultNetwork;
       const implemented = context.neo
         .getImplementedNetworks()
         .includes(network);
@@ -37,7 +37,7 @@ export const getWalletAddressTool: ToolDefinition<Input, WalletAddressResult> =
 
       return {
         message: !implemented
-          ? `Wallet support for ${formatNetworkLabel(network)} is planned but not implemented yet.`
+          ? `Wallet support for ${formatNetworkLabel(network)} is not available in this runtime.`
           : address
             ? `Loaded ${formatNetworkLabel(network)} wallet address: ${address}.`
             : `No ${formatNetworkLabel(network)} wallet address is currently loaded.`,

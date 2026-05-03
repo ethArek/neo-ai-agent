@@ -1,18 +1,30 @@
 export const neoNetworks = ["neoN3", "neoX"] as const;
+export const neoXNetworks = ["mainnet", "testnet", "custom"] as const;
 
 export type NeoNetwork = (typeof neoNetworks)[number];
+export type NeoXNetwork = (typeof neoXNetworks)[number];
 
 export type NetworkAddressMap = Partial<Record<NeoNetwork, string>>;
 
 export interface ProviderReadiness {
   network: NeoNetwork;
+  enabled: boolean;
   configuredNetwork: string;
-  rpcUrl: string;
+  rpcUrlAlias?: string;
+  rpcHost?: string;
   rpcReachable: boolean;
   networkMagic?: number;
+  chainId?: number;
+  configuredChainId?: number;
   networkMatchesConfiguration: boolean;
   walletEnabled: boolean;
   walletAddress?: string;
+  reason?: string;
+}
+
+export interface ProviderReadinessStatus {
+  neoN3: ProviderReadiness;
+  neoX: ProviderReadiness;
 }
 
 export interface TokenMetadata {
@@ -42,6 +54,113 @@ export interface TransactionDetails {
   applicationLog?: Record<string, unknown> | null;
 }
 
+export interface NeoXNetworkConfig {
+  name: NeoXNetwork;
+  chainId?: number;
+  rpcUrl?: string;
+  explorerBaseUrl?: string;
+}
+
+export interface NeoXChainInfo {
+  chain: "neo-x";
+  network: NeoXNetwork;
+  chainId: number;
+  configuredChainId?: number;
+  rpcReachable: boolean;
+  latestBlock: string;
+  rpcUrlAlias: string;
+  explorerBaseUrl?: string;
+}
+
+export interface NeoXNativeBalance {
+  chain: "neo-x";
+  network: NeoXNetwork;
+  chainId: number;
+  owner: string;
+  symbol: "GAS";
+  rawBalanceWei: string;
+  balance: string;
+  rpcUrlAlias: string;
+  explorerUrl?: string;
+}
+
+export interface NeoXBlockReference {
+  network?: NeoXNetwork;
+  number?: string;
+  hash?: string;
+  tag?: "latest";
+}
+
+export interface NeoXTransactionLookup {
+  network?: NeoXNetwork;
+  hash: string;
+}
+
+export interface NeoXContractCallInput {
+  network?: NeoXNetwork;
+  contractAddress: string;
+  abi: unknown;
+  functionName: string;
+  args?: unknown[];
+}
+
+export interface NeoXContractCallResult {
+  chain: "neo-x";
+  network: NeoXNetwork;
+  chainId: number;
+  contractAddress: string;
+  functionName: string;
+  args: unknown[];
+  result: unknown;
+  rpcUrlAlias: string;
+}
+
+export interface NeoXErc20Metadata {
+  chain: "neo-x";
+  network: NeoXNetwork;
+  chainId: number;
+  contractAddress: string;
+  name: string;
+  symbol: string;
+  decimals: number;
+  rpcUrlAlias: string;
+  explorerUrl?: string;
+}
+
+export interface NeoXErc20Balance extends NeoXErc20Metadata {
+  owner: string;
+  rawBalance: string;
+  formattedBalance: string;
+}
+
+export interface NeoXErc721Owner {
+  chain: "neo-x";
+  network: NeoXNetwork;
+  chainId: number;
+  contractAddress: string;
+  tokenId: string;
+  owner: string;
+  rpcUrlAlias: string;
+  explorerUrl?: string;
+}
+
+export interface NeoXNativeTransferInput {
+  network?: NeoXNetwork;
+  to: string;
+  amount: string;
+}
+
+export interface NeoXErc20TransferInput {
+  network?: NeoXNetwork;
+  tokenContract: string;
+  to: string;
+  amount: string;
+}
+
+export interface NeoXContractWriteInput extends NeoXContractCallInput {
+  value?: string;
+}
+
 export type TransactionStatusState =
   | "submitted"
   | "pending"
@@ -54,7 +173,7 @@ export interface TransactionStatus {
   network: NeoNetwork;
   status: TransactionStatusState;
   summary: string;
-  blockNumber?: number;
+  blockNumber?: number | string;
   transaction?: Record<string, unknown> | null;
   applicationLog?: Record<string, unknown> | null;
 }
@@ -73,6 +192,7 @@ export interface TransactionLookup {
 export interface TransactionStatusLookup {
   hash: string;
   network: NeoNetwork;
+  rpcNetwork?: NeoXNetwork;
 }
 
 export interface NeoN3SwapQuoteInput {
@@ -111,10 +231,15 @@ export interface PreparedTransaction {
     | "sendNeoN3Gas"
     | "sendNeoN3Token"
     | "swapNeoN3Token"
-    | "prepareNeoN3ContractWrite";
+    | "prepareNeoN3ContractWrite"
+    | "neox_prepare_native_transfer"
+    | "neox_prepare_erc20_transfer"
+    | "neox_prepare_contract_write";
   summary: string;
   unsignedTransaction: string;
   network: NeoNetwork;
+  rpcNetwork?: NeoXNetwork;
+  chainId?: number;
   sender: string;
   networkMagic?: number;
   nonce?: number;
@@ -135,6 +260,17 @@ export interface PreparedTransaction {
   deadlineMinutes?: number;
   deadlineTimestamp?: number;
   allowedContracts?: string[];
+  functionName?: string;
+  decodedArgs?: unknown[];
+  valueWei?: string;
+  gas?: string;
+  gasPrice?: string;
+  maxFeePerGas?: string;
+  maxPriorityFeePerGas?: string;
+  data?: string;
+  explorerUrl?: string;
+  rpcUrlAlias?: string;
+  transactionRequest?: Record<string, unknown>;
 }
 
 export interface BroadcastResult {
@@ -142,6 +278,7 @@ export interface BroadcastResult {
   sender: string;
   summary: string;
   network: NeoNetwork;
+  rpcNetwork?: NeoXNetwork;
 }
 
 export interface ObservedTokenBalance {
@@ -248,7 +385,41 @@ export interface NeoProvider {
   prepareNeoN3TokenSwap(
     input: NeoN3TokenSwapInput,
   ): Promise<PreparedTransaction>;
+  getNeoXChainInfo(network?: NeoXNetwork): Promise<NeoXChainInfo>;
+  getNeoXNativeBalance(
+    address: string,
+    network?: NeoXNetwork,
+  ): Promise<NeoXNativeBalance>;
+  getNeoXBlock(reference: NeoXBlockReference): Promise<unknown>;
+  getNeoXTransaction(input: NeoXTransactionLookup): Promise<unknown>;
+  getNeoXTransactionReceipt(input: NeoXTransactionLookup): Promise<unknown>;
+  callNeoXContract(
+    input: NeoXContractCallInput,
+  ): Promise<NeoXContractCallResult>;
+  getNeoXErc20Metadata(
+    tokenContract: string,
+    network?: NeoXNetwork,
+  ): Promise<NeoXErc20Metadata>;
+  getNeoXErc20Balance(input: {
+    tokenContract: string;
+    owner: string;
+    network?: NeoXNetwork;
+  }): Promise<NeoXErc20Balance>;
+  getNeoXErc721Owner(input: {
+    contractAddress: string;
+    tokenId: string;
+    network?: NeoXNetwork;
+  }): Promise<NeoXErc721Owner>;
+  prepareNeoXNativeTransfer(
+    input: NeoXNativeTransferInput,
+  ): Promise<PreparedTransaction>;
+  prepareNeoXErc20Transfer(
+    input: NeoXErc20TransferInput,
+  ): Promise<PreparedTransaction>;
+  prepareNeoXContractWrite(
+    input: NeoXContractWriteInput,
+  ): Promise<PreparedTransaction>;
   signAndBroadcast(prepared: PreparedTransaction): Promise<BroadcastResult>;
   walletEnabled(network?: NeoNetwork): boolean;
-  checkReadiness(): Promise<ProviderReadiness>;
+  checkReadiness(): Promise<ProviderReadinessStatus>;
 }

@@ -43,6 +43,25 @@ function createConfig(n3WalletPrivateKey: string): AppConfig {
       tokenMap: {},
       flamingoPairs: [],
     },
+    neoX: {
+      defaultNetwork: "testnet",
+      nativeCurrencySymbol: "GAS",
+      walletPrivateKey: undefined,
+      walletEnabled: false,
+      networks: {
+        mainnet: {
+          name: "mainnet",
+          chainId: 47763,
+        },
+        testnet: {
+          name: "testnet",
+          chainId: 12_227_332,
+        },
+        custom: {
+          name: "custom",
+        },
+      },
+    },
     openAiModel: "gpt-5-mini",
     geminiModel: "gemini-2.5-flash",
     walletEnabled: true,
@@ -303,11 +322,11 @@ describe("NeoProvider", () => {
     jest.restoreAllMocks();
   });
 
-  it("reports Neo N3 as the only implemented network for now", () => {
+  it("reports Neo N3 and Neo X as implemented networks", () => {
     const account = new neoWallet.Account();
     const provider = createNeoProvider(createConfig(account.WIF));
 
-    expect(provider.getImplementedNetworks()).toEqual(["neoN3"]);
+    expect(provider.getImplementedNetworks()).toEqual(["neoN3", "neoX"]);
     expect(provider.getDefaultNetwork()).toBe("neoN3");
     expect(provider.getWalletAddresses()).toEqual({
       neoN3: account.address,
@@ -564,9 +583,8 @@ describe("NeoProvider", () => {
 
   it("falls back to the portfolio overview when the TokenTracker RPC plugin is unavailable", async () => {
     const account = new neoWallet.Account();
-    const provider = createNeoProvider(createConfig(account.WIF));
     const portfolioSpy = jest
-      .spyOn(provider, "getNeoN3PortfolioOverview")
+      .spyOn(NeoN3Provider.prototype, "getNeoN3PortfolioOverview")
       .mockResolvedValue({
         address: account.address,
         gasBalance: {
@@ -596,6 +614,7 @@ describe("NeoProvider", () => {
           },
         ],
       });
+    const provider = createNeoProvider(createConfig(account.WIF));
 
     jest
       .spyOn(neoRpc.RPCClient.prototype, "getNep17Balances")
@@ -797,13 +816,26 @@ describe("NeoProvider", () => {
       .mockResolvedValue(createVersionResponse(860_833_102));
 
     await expect(provider.checkReadiness()).resolves.toMatchObject({
-      network: "neoN3",
-      configuredNetwork: "mainnet",
-      rpcReachable: true,
-      networkMagic: 860_833_102,
-      networkMatchesConfiguration: true,
-      walletEnabled: true,
-      walletAddress: account.address,
+      neoN3: {
+        network: "neoN3",
+        enabled: true,
+        configuredNetwork: "mainnet",
+        rpcReachable: true,
+        networkMagic: 860_833_102,
+        networkMatchesConfiguration: true,
+        walletEnabled: true,
+        walletAddress: account.address,
+      },
+      neoX: {
+        network: "neoX",
+        enabled: false,
+        configuredNetwork: "testnet",
+        rpcReachable: false,
+        networkMatchesConfiguration: true,
+        walletEnabled: false,
+        walletAddress: undefined,
+        reason: "Neo X testnet RPC is not configured.",
+      },
     });
   });
 
@@ -816,9 +848,11 @@ describe("NeoProvider", () => {
       .mockResolvedValue(createVersionResponse(894_710_606));
 
     await expect(provider.checkReadiness()).resolves.toMatchObject({
-      configuredNetwork: "mainnet",
-      networkMagic: 894_710_606,
-      networkMatchesConfiguration: false,
+      neoN3: {
+        configuredNetwork: "mainnet",
+        networkMagic: 894_710_606,
+        networkMatchesConfiguration: false,
+      },
     });
   });
 
@@ -830,8 +864,10 @@ describe("NeoProvider", () => {
       .mockResolvedValue(createVersionResponse(860_833_102));
 
     await expect(provider.checkReadiness()).resolves.toMatchObject({
-      walletEnabled: false,
-      walletAddress: undefined,
+      neoN3: {
+        walletEnabled: false,
+        walletAddress: undefined,
+      },
     });
   });
 });

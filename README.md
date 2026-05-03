@@ -2,9 +2,9 @@
 
 ![Neo AI Agent CLI + REST API](assets/neo-ai-agent-hero.png)
 
-Neo AI Agent is a Neo N3 assistant that lets you ask for blockchain actions in normal language instead of raw RPC calls or contract tooling.
+Neo AI Agent is a Neo assistant that lets you ask for blockchain actions in normal language instead of raw RPC calls or contract tooling.
 
-Technically, it is a CLI-first agent with an experimental REST API. User requests are mapped to Neo N3 tools by an optional OpenAI or Gemini planner, with a built-in fallback planner for common prompts when no LLM is configured.
+Technically, it is a CLI-first agent with an experimental REST API. User requests are mapped to Neo N3 and Neo X tools by an optional OpenAI or Gemini planner, with a built-in fallback planner for common prompts when no LLM is configured.
 
 Examples:
 
@@ -13,12 +13,17 @@ Examples:
 - `show my last 5 transfers`
 - `send 0.1 GAS to arkadiusz.neo`
 - `swap 1 GAS for FUSD`
+- `what is the latest block on Neo X testnet?`
+- `check GAS balance of 0x... on Neo X`
+- `prepare a GAS transfer on Neo X testnet to 0x...`
 
 > [!IMPORTANT]
-> Only `Neo N3` is implemented right now.
-> `Neo X` is planned, but not supported yet.
-> Transfers, regular swaps, and contract writes require confirmation before broadcast.
+> `Neo N3` and `Neo X` are different chains and use different tooling.
+> Neo N3 uses Neo addresses, NEP-17 tokens, invocations, and script hashes.
+> Neo X is EVM-compatible and uses 0x addresses, JSON-RPC, ABI encoding, and ERC-style contracts.
+> Transfers, regular swaps, contract writes, and Neo X transaction previews require confirmation before broadcast.
 > A `force` swap is the exception: it skips the separate `Confirm` step, but it still runs the normal wallet, balance, routing, and slippage checks before immediate broadcast.
+> `force` exists only for Neo N3 Flamingo swaps. Neo X never uses force.
 > See [Force Swaps](#16-force-swaps).
 
 ## Table Of Contents
@@ -30,7 +35,7 @@ Examples:
 - [Confirmation And Safety](#confirmation-and-safety)
 - [Session Memory](#session-memory)
 - [NeoNS Support](#neons-support)
-- [What Is Not Implemented Yet](#what-is-not-implemented-yet)
+- [Neo X Support](#neo-x-support)
 - [Quick Start](#quick-start)
 - [Environment Variables](#environment-variables)
 - [Security Best Practices](#security-best-practices)
@@ -47,9 +52,14 @@ Before you start, make sure you have:
   - the npm version bundled with Node.js 20+ is fine
 - a Neo N3 RPC URL
   - for example a mainnet or testnet RPC endpoint
+- optionally, Neo X RPC URLs if you want EVM-compatible Neo X support
+  - `NEOX_MAINNET_RPC_URL`
+  - `NEOX_TESTNET_RPC_URL`
+  - or `NEOX_CUSTOM_RPC_URL` with `NEOX_CUSTOM_CHAIN_ID`
 - optionally, a wallet secret if you want to prepare transfers or swaps
   - `WALLET_WIF`
   - or `WALLET_PRIVATE_KEY`
+  - for Neo X writes, use `NEOX_PRIVATE_KEY`
 - optionally, an AI provider key for more flexible natural-language planning
   - `OPENAI_API_KEY`
   - or `GEMINI_API_KEY`
@@ -58,8 +68,8 @@ Before you start, make sure you have:
 
 You can use this project in two modes:
 
-- `Read-only mode`: no private key loaded. Best for checking balances, transfers, transactions, blocks, and contract reads. In this mode you should usually include an address or NeoNS name in the prompt.
-- `Wallet mode`: load `WALLET_WIF` or `WALLET_PRIVATE_KEY`. Prompts like `show my portfolio` work naturally, and the agent can prepare transfers, swaps, and contract writes. A `force` swap can also be broadcast immediately.
+- `Read-only mode`: no private key loaded. Best for checking balances, transfers, transactions, blocks, and contract reads. In this mode you should usually include a Neo N3 address, NeoNS name, or Neo X 0x address in the prompt.
+- `Wallet mode`: load `WALLET_WIF` or `WALLET_PRIVATE_KEY` for Neo N3, and `NEOX_PRIVATE_KEY` for Neo X. Prompts like `show my portfolio` work naturally for Neo N3, and the agent can prepare confirmation-safe write transactions. A Neo N3 `force` swap can also be broadcast immediately.
 
 > [!TIP]
 > If you are unsure where to start, start with `read-only` mode.
@@ -81,6 +91,16 @@ Neo AI Agent is mainly for everyday Neo N3 tasks:
 - prepare and confirm regular Flamingo swaps
 - broadcast a `force` Flamingo swap immediately
 - track the latest actions from your current session
+
+For Neo X, it can:
+
+- check RPC connectivity, chain ID, and latest block
+- check native GAS balances for 0x addresses
+- fetch blocks, transactions, and receipts
+- call Solidity contracts with ABI fragments
+- read ERC-20 metadata and balances
+- read ERC-721 owners
+- prepare native GAS, ERC-20, and contract-write transaction previews
 
 It is built as a CLI tool first, and it also has an experimental REST API for integrations.
 
@@ -323,6 +343,7 @@ This applies to:
 - sending tokens
 - regular Flamingo swaps
 - contract writes
+- Neo X native, ERC-20, and contract-write transaction previews
 
 ## Session Memory
 
@@ -352,17 +373,28 @@ Examples:
 - `send 0.1 GAS to arkadiusz.neo`
 - `show portfolio for arkadiusz.neo`
 
-## What Is Not Implemented Yet
+## Neo X Support
 
-The project already knows that `Neo X` exists, but it is not operational yet.
+Neo X is supported as an EVM-compatible chain, not as a Neo N3 network. Neo X tools use 0x EVM addresses, Ethereum-style JSON-RPC calls, Solidity ABI encoding, gas estimates, and transaction receipts.
 
-In practice, this means:
+Supported Neo X networks:
 
-- the code can recognize requests that mention `Neo X`
-- the app can tell you that `Neo X` is planned
-- but the real tools, wallet flows, and on-chain actions are implemented only for `Neo N3`
+- Neo X Mainnet, default chain ID `47763`
+- Neo X Testnet T4, default chain ID `12227332`
+- custom or local Neo X networks with `NEOX_CUSTOM_RPC_URL` and `NEOX_CUSTOM_CHAIN_ID`
 
-If you ask for something on `Neo X`, you should expect a message that this support is planned but not implemented yet.
+Example prompts:
+
+- `Show my address on Neo X`
+- `What is the latest block on Neo X testnet?`
+- `Check GAS balance of 0x... on Neo X`
+- `Check ERC-20 balance for 0x... on Neo X`
+- `Read symbol and decimals from token contract 0x... on Neo X`
+- `Call this Solidity contract on Neo X`
+- `Prepare a GAS transfer on Neo X testnet to 0x...`
+- `Prepare an ERC-20 transfer on Neo X`
+
+If a prompt says only `Neo` and could mean either Neo N3 or Neo X, the agent asks for clarification instead of guessing.
 
 ## Quick Start
 
@@ -408,6 +440,16 @@ Good first prompts in read-only mode:
 - `show portfolio for arkadiusz.neo`
 - `show token balances for NQ9NEvVrutLL6JDtUMKMrkEG6QpWNxgNBM`
 - `show my last 5 transfers for arkadiusz.neo`
+- `what is the latest block on Neo X testnet?`
+- `check GAS balance of 0x... on Neo X`
+
+To enable Neo X read-only tools, add the RPC URL for the network you want:
+
+```env
+NEOX_DEFAULT_NETWORK=testnet
+NEOX_TESTNET_RPC_URL=https://your-neox-testnet-rpc.example
+NEOX_EXPLORER_BASE_URL=https://your-neox-explorer.example
+```
 
 **Wallet setup**
 
@@ -420,6 +462,16 @@ WALLET_WIF=your_wallet_wif_here
 ```
 
 You can use `WALLET_PRIVATE_KEY` instead of `WALLET_WIF` if that is what you have.
+
+For Neo X transaction previews and confirmed broadcasts, use a separate EVM private key:
+
+```env
+NEOX_DEFAULT_NETWORK=testnet
+NEOX_TESTNET_RPC_URL=https://your-neox-testnet-rpc.example
+NEOX_PRIVATE_KEY=0x_your_evm_private_key_here
+```
+
+Neo X write prompts prepare a transaction first. Nothing is broadcast until you type `Confirm`.
 
 5. Optionally connect an AI provider for more flexible natural-language planning.
 
@@ -477,6 +529,13 @@ npm run cli -- show portfolio for arkadiusz.neo
 npm run cli -- interactive
 ```
 
+Interactive mode asks you to choose the active chain for the session:
+
+- choose `Neo N3` for Neo addresses, NeoNS, NEP-17, and Flamingo flows
+- choose `Neo X` for 0x addresses, native GAS, ERC-20/ERC-721, and Solidity flows
+- prompts without an explicit chain use the active chain
+- prompts that explicitly mention `Neo N3` or `Neo X` switch the active chain for the rest of the session
+
 This is the best mode if you want to:
 
 - inspect a wallet
@@ -497,6 +556,20 @@ If you are not technical, these are the only settings you usually need to think 
   - easiest way to load a wallet for wallet mode
 - `WALLET_PRIVATE_KEY`
   - alternative to `WALLET_WIF`
+- `NEOX_DEFAULT_NETWORK`
+  - `mainnet`, `testnet`, or `custom`
+- `NEOX_MAINNET_RPC_URL`
+  - Neo X Mainnet JSON-RPC endpoint
+- `NEOX_TESTNET_RPC_URL`
+  - Neo X Testnet T4 JSON-RPC endpoint
+- `NEOX_CUSTOM_RPC_URL`
+  - local or private Neo X JSON-RPC endpoint
+- `NEOX_CUSTOM_CHAIN_ID`
+  - required when `NEOX_DEFAULT_NETWORK=custom`
+- `NEOX_EXPLORER_BASE_URL`
+  - optional explorer base URL for links
+- `NEOX_PRIVATE_KEY`
+  - optional 0x-prefixed EVM private key for Neo X transaction preparation and confirmed broadcasts
 - `LLM_PROVIDER`
   - optional, `openai` or `gemini`
 - `OPENAI_API_KEY`
@@ -511,6 +584,7 @@ You can safely ignore the more advanced variables at first.
 - Never commit `.env`, paste wallet secrets into chat, or share screenshots that show your key material. If a secret may have leaked, move funds out and rotate the key.
 - Use a separate low-balance wallet for the agent. Do not load your main personal wallet or treasury wallet into a local assistant by default.
 - Start in `read-only` mode or on `testnet` first. Only load a mainnet wallet after you understand the flow and have checked the prompts you plan to use.
+- Keep Neo N3 wallet secrets and Neo X EVM private keys separate. Do not reuse production keys across chains.
 - If you run the REST API in wallet mode, set `API_BEARER_TOKEN` and do not expose that API publicly without additional protection.
 
 ## REST API
@@ -587,6 +661,7 @@ curl -X POST http://localhost:3000/api/messages \
 Most users can stop at `.env.example`, but the project also supports:
 
 - mainnet and testnet Neo N3 defaults
+- Neo X Mainnet, Testnet T4, and custom EVM networks
 - custom token maps
 - custom Flamingo pair configuration
 - custom API host and port

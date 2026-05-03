@@ -36,6 +36,7 @@ describe("runCli", () => {
     const readline = {
       question: jest
         .fn<Promise<string>, [string]>()
+        .mockResolvedValueOnce("")
         .mockResolvedValueOnce("show unclaimed gas for arkadiusz.neo")
         .mockResolvedValueOnce("exit"),
       close: jest.fn(),
@@ -73,7 +74,7 @@ describe("runCli", () => {
     expect(stderrWriteSpy).toHaveBeenCalledWith(
       expect.stringContaining("NeoNS name 'arkadiusz.neo' has expired."),
     );
-    expect(readline.question).toHaveBeenCalledTimes(2);
+    expect(readline.question).toHaveBeenCalledTimes(3);
     expect(readline.close).toHaveBeenCalledTimes(1);
     expect(stdoutWriteSpy).toHaveBeenCalled();
   });
@@ -126,9 +127,9 @@ describe("runCli", () => {
     const runtime = createRuntime();
     const readiness = await runtime.getReadinessStatus();
 
-    readiness.neo.configuredNetwork = "mainnet";
-    readiness.neo.networkMagic = 894_710_606;
-    readiness.neo.networkMatchesConfiguration = false;
+    readiness.neoN3.configuredNetwork = "mainnet";
+    readiness.neoN3.networkMagic = 894_710_606;
+    readiness.neoN3.networkMatchesConfiguration = false;
     jest
       .mocked(createInterface)
       .mockReturnValue(
@@ -143,6 +144,97 @@ describe("runCli", () => {
     );
     expect(stdoutWriteSpy).toHaveBeenCalledWith(
       expect.stringContaining("configured: MAINNET"),
+    );
+    expect(readline.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows Neo X readiness warnings in the interactive banner", async () => {
+    const readline = {
+      question: jest
+        .fn<Promise<string>, [string]>()
+        .mockResolvedValueOnce("exit"),
+      close: jest.fn(),
+    } satisfies {
+      question: (prompt: string) => Promise<string>;
+      close: () => void;
+    };
+    const stdoutWriteSpy = jest
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+    const runtime = createRuntime();
+    const readiness = await runtime.getReadinessStatus();
+
+    readiness.neoX.enabled = false;
+    readiness.neoX.rpcReachable = false;
+    readiness.neoX.networkMatchesConfiguration = false;
+    jest
+      .mocked(createInterface)
+      .mockReturnValue(
+        readline as unknown as ReturnType<typeof createInterface>,
+      );
+    jest.spyOn(runtime, "getReadinessStatus").mockResolvedValueOnce(readiness);
+
+    await expect(runCli(runtime, ["interactive"])).resolves.toBeUndefined();
+
+    expect(stdoutWriteSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Neo X"),
+    );
+    expect(stdoutWriteSpy).toHaveBeenCalledWith(
+      expect.stringContaining("disabled"),
+    );
+    expect(readline.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the selected interactive chain as the session default", async () => {
+    const readline = {
+      question: jest
+        .fn<Promise<string>, [string]>()
+        .mockResolvedValueOnce("2")
+        .mockResolvedValueOnce("show my address")
+        .mockResolvedValueOnce("exit"),
+      close: jest.fn(),
+    } satisfies {
+      question: (prompt: string) => Promise<string>;
+      close: () => void;
+    };
+    const stdoutWriteSpy = jest
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+    const runtime = createRuntime();
+    const startSessionSpy = jest
+      .spyOn(runtime, "startSession")
+      .mockReturnValue("session-neo-x");
+    const handleMessageSpy = jest
+      .spyOn(runtime, "handleMessage")
+      .mockResolvedValue({
+        sessionId: "session-neo-x",
+        message: "Loaded Neo X wallet address.",
+        tool: "getWalletAddress",
+        arguments: {
+          network: "neoX",
+        },
+        result: {
+          network: "neoX",
+        },
+        requiresConfirmation: false,
+      });
+
+    jest
+      .mocked(createInterface)
+      .mockReturnValue(
+        readline as unknown as ReturnType<typeof createInterface>,
+      );
+
+    await expect(runCli(runtime, ["interactive"])).resolves.toBeUndefined();
+
+    expect(startSessionSpy).toHaveBeenCalledWith("neoX");
+    expect(handleMessageSpy).toHaveBeenCalledWith(
+      "show my address",
+      "session-neo-x",
+      expect.any(Object),
+    );
+    expect(stdoutWriteSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Active chain: Neo X"),
     );
     expect(readline.close).toHaveBeenCalledTimes(1);
   });

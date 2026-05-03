@@ -40,17 +40,17 @@ export const getBlockTool: ToolDefinition<Input, unknown> = {
   schema: inputSchema,
   async execute(input, context) {
     const parsed = inputSchema.parse(input);
+    const network = parsed.network ?? context.session.defaultNetwork;
     const reference = parsed.hash
       ? {
           hash: parsed.hash,
-          network: parsed.network,
+          network,
         }
       : {
           height: parsed.height,
-          network: parsed.network,
+          network,
         };
     const block = await context.neo.getBlock(reference);
-    const network = parsed.network ?? context.neo.getDefaultNetwork();
     const label = parsed.hash
       ? `hash ${parsed.hash}`
       : `height ${parsed.height}`;

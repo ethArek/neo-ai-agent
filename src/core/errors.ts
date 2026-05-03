@@ -1,5 +1,7 @@
 import { ZodError } from "zod";
 
+import { sanitizeForLogs, sanitizeStringValue } from "./logger";
+
 export interface AppErrorOptions {
   code: string;
   statusCode: number;
@@ -102,19 +104,23 @@ export interface SerializedError {
 export function serializeError(error: unknown): SerializedError {
   if (error instanceof AppError) {
     return {
-      message: error.expose ? error.message : "Internal server error.",
+      message: error.expose
+        ? sanitizeStringValue(error.message)
+        : "Internal server error.",
       code: error.code,
       statusCode: error.statusCode,
-      details: error.expose ? error.details : undefined,
+      details: error.expose ? sanitizeForLogs(error.details) : undefined,
     };
   }
 
   if (error instanceof ZodError) {
     return {
-      message: error.issues[0]?.message ?? "Request validation failed.",
+      message: sanitizeStringValue(
+        error.issues[0]?.message ?? "Request validation failed.",
+      ),
       code: "VALIDATION_ERROR",
       statusCode: 400,
-      details: error.issues,
+      details: sanitizeForLogs(error.issues),
     };
   }
 

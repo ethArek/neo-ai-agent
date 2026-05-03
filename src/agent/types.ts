@@ -24,6 +24,18 @@ export const toolNames = [
   "sendNeoN3Gas",
   "sendNeoN3Token",
   "swapNeoN3Token",
+  "neox_get_chain_info",
+  "neox_get_native_balance",
+  "neox_get_block",
+  "neox_get_transaction",
+  "neox_get_transaction_receipt",
+  "neox_call_contract",
+  "neox_get_erc20_balance",
+  "neox_get_erc20_metadata",
+  "neox_get_erc721_owner",
+  "neox_prepare_native_transfer",
+  "neox_prepare_erc20_transfer",
+  "neox_prepare_contract_write",
 ] as const;
 
 export type ToolName = (typeof toolNames)[number];
@@ -50,6 +62,7 @@ export interface BroadcastActivity {
   arguments: Record<string, unknown>;
   txHash: string;
   network: BroadcastResult["network"];
+  rpcNetwork?: BroadcastResult["rpcNetwork"];
   sender: string;
   summary: string;
   createdAt: string;
@@ -69,6 +82,7 @@ export interface BroadcastActivity {
 export interface ToolSessionContext {
   id: string;
   defaultNetwork: NeoNetwork;
+  activeNetworkSelected: boolean;
   implementedNetworks: NeoNetwork[];
   walletAddress?: string;
   walletAddresses: NetworkAddressMap;
@@ -130,6 +144,7 @@ export interface PlannerExecutionPolicy {
 
 export interface PlannerContext {
   defaultNetwork: NeoNetwork;
+  activeNetworkSelected: boolean;
   implementedNetworks: NeoNetwork[];
   walletEnabled: boolean;
   pendingAction?: PendingToolAction;

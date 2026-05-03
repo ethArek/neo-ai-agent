@@ -6,6 +6,7 @@ import {
   resolveSessionAddressReference,
 } from "../core/addressResolver";
 import { ValidationError } from "../core/errors";
+import { formatNetworkLabel } from "../core/formatting";
 import { logger } from "../core/logger";
 import { telemetry } from "../core/telemetry";
 import type {
@@ -80,6 +81,11 @@ export class AgentRuntime {
     this.syncSessionNetworkContext(session.id);
     const trimmedMessage = message.trim();
     const normalizedMessage = trimmedMessage.toLowerCase();
+    const explicitNetwork = this.detectExplicitNetworkSwitch(trimmedMessage);
+
+    if (explicitNetwork) {
+      this.setSessionDefaultNetwork(session.id, explicitNetwork);
+    }
 
     if (session.pendingAction && this.isConfirmMessage(normalizedMessage)) {
       return this.confirmPendingAction(session.id, options);
@@ -142,6 +148,7 @@ export class AgentRuntime {
 
     const plan = await this.planner.plan(trimmedMessage, {
       defaultNetwork: session.defaultNetwork,
+      activeNetworkSelected: session.activeNetworkSelected,
       implementedNetworks: session.implementedNetworks,
       walletEnabled: this.neo.walletEnabled(),
       pendingAction: session.pendingAction,
@@ -382,6 +389,31 @@ export class AgentRuntime {
     }
   }
 
+  public startSession(defaultNetwork?: NeoNetwork): string {
+    const session = this.sessions.getOrCreate();
+
+    this.syncSessionNetworkContext(session.id);
+
+    if (defaultNetwork) {
+      this.setSessionDefaultNetwork(session.id, defaultNetwork);
+    }
+
+    return session.id;
+  }
+
+  public setSessionDefaultNetwork(
+    sessionId: string,
+    defaultNetwork: NeoNetwork,
+  ): void {
+    if (!this.neo.getImplementedNetworks().includes(defaultNetwork)) {
+      throw new ValidationError(
+        `${formatNetworkLabel(defaultNetwork)} is not available in this runtime.`,
+      );
+    }
+
+    this.sessions.setDefaultNetwork(sessionId, defaultNetwork);
+  }
+
   private async executePlannedAction(
     sessionId: string,
     plan: PlannerAction,
@@ -392,7 +424,7 @@ export class AgentRuntime {
         sessionId,
         message:
           plan.explanation ??
-          "I could not map that request to a supported Neo action. Neo N3 is implemented now, and Neo X is reserved for future support.",
+          "I could not map that request to a supported Neo action. Try a Neo N3 request, a Neo X EVM request, or clarify which chain you want to use.",
         tool: null,
         arguments: plan.arguments,
         result: null,
@@ -474,6 +506,20 @@ export class AgentRuntime {
     });
   }
 
+  private detectExplicitNetworkSwitch(message: string): NeoNetwork | undefined {
+    const lowerMessage = message.trim().toLowerCase();
+    const mentionsNeoX = /\bneo\s*x\b|\bneox\b|\bevm\s+on\s+neo\b/.test(
+      lowerMessage,
+    );
+    const mentionsNeoN3 = /\bneo\s*n3\b|\bon\s+n3\b|\bn3\b/.test(lowerMessage);
+
+    if (mentionsNeoX === mentionsNeoN3) {
+      return undefined;
+    }
+
+    return mentionsNeoX ? "neoX" : "neoN3";
+  }
+
   private createDraftAction(plan: PlannerAction): DraftToolAction {
     if (!plan.tool) {
       throw new ValidationError(
@@ -518,6 +564,25 @@ export class AgentRuntime {
       plan.missingInputs.length > 0
     ) {
       return 'I need amount, fromToken, and toToken to run the Neo N3 Flamingo swap flow. Reply with something like "swap 1 GAS for FUSD".';
+    }
+
+    if (
+      plan.tool === "neox_get_native_balance" &&
+      plan.missingInputs.length === 1 &&
+      plan.missingInputs[0] === "address"
+    ) {
+      return "I need a Neo X 0x address to check the native GAS balance.";
+    }
+
+    if (
+      plan.tool === "neox_get_erc20_balance" &&
+      plan.missingInputs.length > 0
+    ) {
+      return "I need a Neo X token contract and owner 0x address to check an ERC-20 balance.";
+    }
+
+    if (plan.tool === "neox_call_contract" && plan.missingInputs.length > 0) {
+      return "I need a Neo X contract address, ABI or function signature, and functionName to call a Solidity contract.";
     }
 
     return `I need ${missingInputs} to run ${plan.tool}.`;
@@ -565,6 +630,17 @@ export class AgentRuntime {
         neoN3Recipient
       ) {
         mergedArguments.to = neoN3Recipient;
+        remainingInputs.delete(inputName);
+        continue;
+      }
+
+      if (
+        inputName === "to" &&
+        this.acceptsNeoXRecipient(draftAction.tool) &&
+        resolvedAddress &&
+        /^0x[a-fA-F0-9]{40}$/.test(resolvedAddress)
+      ) {
+        mergedArguments.to = resolvedAddress;
         remainingInputs.delete(inputName);
         continue;
       }
@@ -644,6 +720,13 @@ export class AgentRuntime {
     return tool === "sendNeoN3Gas" || tool === "sendNeoN3Token";
   }
 
+  private acceptsNeoXRecipient(tool: ToolName): boolean {
+    return (
+      tool === "neox_prepare_native_transfer" ||
+      tool === "neox_prepare_erc20_transfer"
+    );
+  }
+
   private hydratePlanWithSessionContext(
     plan: PlannerAction,
     message: string,
@@ -686,7 +769,8 @@ export class AgentRuntime {
       tool === "getNeoN3TokenBalances" ||
       tool === "getNeoN3UnclaimedGas" ||
       tool === "getNeoN3TransferHistory" ||
-      tool === "getRecentActions"
+      tool === "getRecentActions" ||
+      tool === "neox_get_native_balance"
     );
   }
 
@@ -704,7 +788,9 @@ export class AgentRuntime {
     const addressFromArguments =
       typeof argumentsPayload.address === "string"
         ? argumentsPayload.address
-        : undefined;
+        : typeof argumentsPayload.owner === "string"
+          ? argumentsPayload.owner
+          : undefined;
 
     if (addressFromArguments && this.shouldRememberAddressFromTool(tool)) {
       this.sessions.rememberAddress(
@@ -732,7 +818,9 @@ export class AgentRuntime {
       tool === "getNeoN3PortfolioOverview" ||
       tool === "getNeoN3TokenBalances" ||
       tool === "getNeoN3UnclaimedGas" ||
-      tool === "getNeoN3TransferHistory"
+      tool === "getNeoN3TransferHistory" ||
+      tool === "neox_get_native_balance" ||
+      tool === "neox_get_erc20_balance"
     );
   }
 
@@ -821,6 +909,7 @@ export class AgentRuntime {
       arguments: argumentsPayload,
       txHash: result.txHash,
       network: result.network,
+      rpcNetwork: result.rpcNetwork,
       sender: result.sender,
       summary: result.summary,
       createdAt: new Date().toISOString(),
@@ -913,6 +1002,7 @@ export class AgentRuntime {
     let latestStatus = await this.neo.getTransactionStatus({
       hash: broadcast.txHash,
       network: broadcast.network,
+      rpcNetwork: broadcast.rpcNetwork,
     });
     let waitingLabelEmitted = false;
 
@@ -932,6 +1022,7 @@ export class AgentRuntime {
       latestStatus = await this.neo.getTransactionStatus({
         hash: broadcast.txHash,
         network: broadcast.network,
+        rpcNetwork: broadcast.rpcNetwork,
       });
     }
 
@@ -952,6 +1043,10 @@ export class AgentRuntime {
     prepared?: PreparedTransaction,
   ): Promise<PostTransactionBalances | undefined> {
     if (status.status !== "confirmed") {
+      return undefined;
+    }
+
+    if (broadcast.network !== "neoN3") {
       return undefined;
     }
 
@@ -1097,6 +1192,10 @@ export class AgentRuntime {
       case "sendNeoN3Gas":
       case "sendNeoN3Token":
         return "Transfer submitted. Tracking on-chain confirmation...";
+      case "neox_prepare_native_transfer":
+      case "neox_prepare_erc20_transfer":
+      case "neox_prepare_contract_write":
+        return "Neo X transaction submitted. Tracking EVM receipt...";
       default:
         return "Transaction submitted. Tracking on-chain confirmation...";
     }
@@ -1138,12 +1237,16 @@ export class AgentRuntime {
   }
 
   public async getReadinessStatus(): Promise<{
-    neo: Awaited<ReturnType<NeoProvider["checkReadiness"]>>;
+    neoN3: Awaited<ReturnType<NeoProvider["checkReadiness"]>>["neoN3"];
+    neoX: Awaited<ReturnType<NeoProvider["checkReadiness"]>>["neoX"];
     sessions: ReturnType<SessionStore["getStats"]>;
     toolCount: number;
   }> {
+    const readiness = await this.neo.checkReadiness();
+
     return {
-      neo: await this.neo.checkReadiness(),
+      neoN3: readiness.neoN3,
+      neoX: readiness.neoX,
       sessions: this.sessions.getStats(),
       toolCount: this.registry.listToolNames().length,
     };

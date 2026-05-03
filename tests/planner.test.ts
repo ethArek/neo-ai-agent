@@ -24,6 +24,7 @@ function createContext(
 ): PlannerContext {
   return {
     defaultNetwork: "neoN3",
+    activeNetworkSelected: false,
     implementedNetworks: ["neoN3"],
     walletEnabled: false,
     walletAddresses: {},
@@ -237,6 +238,25 @@ describe("PlannerService", () => {
     expect(plan.arguments).toEqual({});
   });
 
+  it("maps Neo X wallet address requests to getWalletAddress", async () => {
+    const plan = await createPlanner().plan(
+      "show my address on Neo X",
+      createContext({
+        walletEnabled: true,
+        walletAddresses: {
+          neoX: "0xAA00000000000000000000000000000000000001",
+        },
+        implementedNetworks: ["neoN3", "neoX"],
+      }),
+    );
+
+    expect(plan.tool).toBe("getWalletAddress");
+    expect(plan.intent).toBe("get_wallet_address");
+    expect(plan.arguments).toEqual({
+      network: "neoX",
+    });
+  });
+
   it("recognizes confirmation text", async () => {
     const plan = await createPlanner().plan(
       "Confirm",
@@ -261,17 +281,165 @@ describe("PlannerService", () => {
     expect(plan.intent).toBe("unknown");
   });
 
-  it("keeps explicit Neo X requests unsupported until that network is implemented", async () => {
+  it("routes a Neo X GAS balance request to the native balance tool", async () => {
     const plan = await createPlanner().plan(
-      "show my Neo X address",
+      "check GAS balance on Neo X",
       createContext({
         walletEnabled: true,
+        walletAddresses: {
+          neoX: "0xAA00000000000000000000000000000000000001",
+        },
+        implementedNetworks: ["neoN3", "neoX"],
+      }),
+    );
+
+    expect(plan.tool).toBe("neox_get_native_balance");
+    expect(plan.arguments).toMatchObject({
+      address: "0xAA00000000000000000000000000000000000001",
+    });
+  });
+
+  it("uses the selected Neo X chain for generic GAS balance requests", async () => {
+    const plan = await createPlanner().plan(
+      "check GAS balance",
+      createContext({
+        defaultNetwork: "neoX",
+        activeNetworkSelected: true,
+        walletEnabled: true,
+        walletAddresses: {
+          neoX: "0xAA00000000000000000000000000000000000001",
+        },
+        implementedNetworks: ["neoN3", "neoX"],
+      }),
+    );
+
+    expect(plan.tool).toBe("neox_get_native_balance");
+    expect(plan.arguments).toMatchObject({
+      address: "0xAA00000000000000000000000000000000000001",
+    });
+  });
+
+  it("routes a Neo X ERC-20 balance request to the ERC-20 balance tool", async () => {
+    const plan = await createPlanner().plan(
+      "check ERC20 balance on Neo X",
+      createContext({
+        implementedNetworks: ["neoN3", "neoX"],
+      }),
+    );
+
+    expect(plan.tool).toBe("neox_get_erc20_balance");
+    expect(plan.missingInputs).toEqual(["tokenContract", "owner"]);
+  });
+
+  it("routes a Neo X Solidity contract call to the contract call tool", async () => {
+    const plan = await createPlanner().plan(
+      "call this Solidity contract on Neo X",
+      createContext({
+        implementedNetworks: ["neoN3", "neoX"],
+      }),
+    );
+
+    expect(plan.tool).toBe("neox_call_contract");
+    expect(plan.missingInputs).toEqual([
+      "contractAddress",
+      "functionName",
+      "abi",
+    ]);
+  });
+
+  it("keeps NEP-17 balance requests on Neo N3", async () => {
+    const plan = await createPlanner().plan(
+      "check NEP-17 balance on Neo N3",
+      createContext({
+        walletAddress: neoN3Address,
+        walletAddresses: {
+          neoN3: neoN3Address,
+        },
+        implementedNetworks: ["neoN3", "neoX"],
+      }),
+    );
+
+    expect(plan.tool).toBe("getNeoN3TokenBalances");
+    expect(plan.arguments).toMatchObject({
+      address: neoN3Address,
+    });
+  });
+
+  it("asks for clarification when a Neo balance request is ambiguous", async () => {
+    const plan = await createPlanner().plan(
+      "check my Neo balance",
+      createContext({
+        walletAddress: neoN3Address,
+        walletAddresses: {
+          neoN3: neoN3Address,
+          neoX: "0xAA00000000000000000000000000000000000001",
+        },
+        implementedNetworks: ["neoN3", "neoX"],
       }),
     );
 
     expect(plan.tool).toBeNull();
-    expect(plan.intent).toBe("unsupported_network");
-    expect(plan.explanation).toContain("Neo X support is planned");
+    expect(plan.intent).toBe("clarify_neo_network");
+    expect(plan.explanation).toContain("Neo N3 or Neo X");
+  });
+
+  it("keeps script-hash read requests on Neo N3 when the prompt is explicit", async () => {
+    const plan = await createPlanner().plan(
+      "call balanceOf on script hash 0xd2a4cff31913016155e38e474a2c06d08be276cf",
+      createContext({
+        implementedNetworks: ["neoN3", "neoX"],
+      }),
+    );
+
+    expect(plan.tool).toBe("invokeNeoN3Read");
+    expect(plan.arguments).toMatchObject({
+      contractHash: "0xd2a4cff31913016155e38e474a2c06d08be276cf",
+      operation: "balanceOf",
+    });
+  });
+
+  it("keeps explicit Neo N3 0x contract prompts on Neo N3", async () => {
+    const plan = await createPlanner().plan(
+      "invoke balanceOf on 0xd2a4cff31913016155e38e474a2c06d08be276cf on Neo N3",
+      createContext({
+        implementedNetworks: ["neoN3", "neoX"],
+      }),
+    );
+
+    expect(plan.tool).toBe("invokeNeoN3Read");
+    expect(plan.arguments).toMatchObject({
+      contractHash: "0xd2a4cff31913016155e38e474a2c06d08be276cf",
+      operation: "balanceOf",
+    });
+  });
+
+  it("asks for clarification when a 0x contract prompt is chain-ambiguous", async () => {
+    const plan = await createPlanner().plan(
+      "invoke balanceOf on 0xd2a4cff31913016155e38e474a2c06d08be276cf",
+      createContext({
+        implementedNetworks: ["neoN3", "neoX"],
+      }),
+    );
+
+    expect(plan.tool).toBeNull();
+    expect(plan.intent).toBe("clarify_neo_network");
+    expect(plan.explanation).toContain("Neo N3 or Neo X");
+  });
+
+  it("keeps plain 0x transfer prompts on Neo X instead of asking for clarification", async () => {
+    const plan = await createPlanner().plan(
+      "prepare 1 GAS to 0xAA00000000000000000000000000000000000001",
+      createContext({
+        implementedNetworks: ["neoN3", "neoX"],
+      }),
+    );
+
+    expect(plan.tool).toBe("neox_prepare_native_transfer");
+    expect(plan.arguments).toMatchObject({
+      amount: "1",
+      to: "0xAA00000000000000000000000000000000000001",
+    });
+    expect(plan.intent).toBe("neox_prepare_native_transfer");
   });
 
   it("ignores provider confirmation intents unless the raw user message is an explicit confirm phrase", async () => {

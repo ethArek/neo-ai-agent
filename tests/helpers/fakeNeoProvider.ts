@@ -13,11 +13,23 @@ import type {
   NeoN3TokenTransferInput,
   NeoN3TransferHistory,
   NeoN3UnclaimedGas,
+  NeoXBlockReference,
+  NeoXChainInfo,
+  NeoXContractCallInput,
+  NeoXContractCallResult,
+  NeoXContractWriteInput,
+  NeoXErc20Balance,
+  NeoXErc20Metadata,
+  NeoXErc20TransferInput,
+  NeoXErc721Owner,
+  NeoXNativeBalance,
+  NeoXNativeTransferInput,
+  NeoXNetwork,
   NeoNetwork,
   NeoProvider,
   NetworkAddressMap,
   PreparedTransaction,
-  ProviderReadiness,
+  ProviderReadinessStatus,
   TokenBalance,
   TokenMetadata,
   TransactionDetails,
@@ -32,31 +44,40 @@ const fusdContract = "0x1005d400bcc2a56b7352f09e273be3f9933a5fb1";
 const flmContract = "0xf0151f528127558851b39c2cd8aa47da7418ab28";
 const flamingoBrokerContract = "0xec268e9c642b7d09d10fe658bcb1cc63c0895d4d";
 const flamingoRouterContract = "0xde3a4b093abbd07e9a69cdec88a54d9a1fe14975";
+const neoXTokenContract = "0x1111111111111111111111111111111111111111";
+const neoXNftContract = "0x2222222222222222222222222222222222222222";
+const neoXRecipientAddress = "0x3333333333333333333333333333333333333333";
 
 function createPreparedTransaction(
   input: Omit<
     PreparedTransaction,
     "kind" | "network" | "unsignedTransaction"
   > & {
+    network?: NeoNetwork;
     unsignedTransaction?: string;
   },
 ): PreparedTransaction {
   return {
     ...input,
     kind: "transaction",
-    network: "neoN3",
+    network: input.network ?? "neoN3",
     unsignedTransaction: input.unsignedTransaction ?? "00c0ffee",
   };
 }
 
 export class FakeNeoProvider implements NeoProvider {
   public readonly neoN3Address = new neoWallet.Account().address;
+  public readonly neoXAddress = "0xAA00000000000000000000000000000000000001";
   public readonly recipientAddress = new neoWallet.Account().address;
+  public readonly neoXRecipientAddress = neoXRecipientAddress;
+  public readonly neoXTokenContract = neoXTokenContract;
+  public readonly neoXNftContract = neoXNftContract;
   public readonly neoNsName = "arkadiusz.neo";
   public readonly latestTxHash = `0x${"c".repeat(64)}`;
+  public readonly latestNeoXTxHash = `0x${"f".repeat(64)}`;
 
   public getImplementedNetworks(): NeoNetwork[] {
-    return ["neoN3"];
+    return ["neoN3", "neoX"];
   }
 
   public getDefaultNetwork(): NeoNetwork {
@@ -66,11 +87,12 @@ export class FakeNeoProvider implements NeoProvider {
   public getWalletAddresses(): NetworkAddressMap {
     return {
       neoN3: this.neoN3Address,
+      neoX: this.neoXAddress,
     };
   }
 
   public getWalletAddress(network: NeoNetwork): string | undefined {
-    return network === "neoN3" ? this.neoN3Address : undefined;
+    return network === "neoN3" ? this.neoN3Address : this.neoXAddress;
   }
 
   public async getNeoN3GasBalance(address: string): Promise<TokenBalance> {
@@ -248,6 +270,23 @@ export class FakeNeoProvider implements NeoProvider {
   public async getTransactionStatus(
     input: TransactionStatusLookup,
   ): Promise<TransactionStatus> {
+    if (input.network === "neoX") {
+      return {
+        hash: input.hash,
+        network: input.network,
+        status: "confirmed",
+        summary: `Neo X transaction ${input.hash} is confirmed.`,
+        blockNumber: "654",
+        transaction: {
+          hash: input.hash,
+          from: this.neoXAddress,
+        },
+        applicationLog: {
+          status: "success",
+        },
+      };
+    }
+
     return {
       hash: input.hash,
       network: input.network,
@@ -491,10 +530,246 @@ export class FakeNeoProvider implements NeoProvider {
     });
   }
 
+  public async getNeoXChainInfo(
+    network: NeoXNetwork = "testnet",
+  ): Promise<NeoXChainInfo> {
+    return {
+      chain: "neo-x",
+      network,
+      chainId: this.getNeoXChainId(network),
+      configuredChainId: this.getNeoXChainId(network),
+      rpcReachable: true,
+      latestBlock: "123456",
+      rpcUrlAlias:
+        network === "mainnet" ? "NEOX_MAINNET_RPC_URL" : "NEOX_TESTNET_RPC_URL",
+      explorerBaseUrl: "https://xexplorer.example.com",
+    };
+  }
+
+  public async getNeoXNativeBalance(
+    address: string,
+    network: NeoXNetwork = "testnet",
+  ): Promise<NeoXNativeBalance> {
+    return {
+      chain: "neo-x",
+      network,
+      chainId: this.getNeoXChainId(network),
+      owner: address,
+      symbol: "GAS",
+      rawBalanceWei: "1230000000000000000",
+      balance: "1.23",
+      rpcUrlAlias:
+        network === "mainnet" ? "NEOX_MAINNET_RPC_URL" : "NEOX_TESTNET_RPC_URL",
+      explorerUrl: `https://xexplorer.example.com/address/${address}`,
+    };
+  }
+
+  public async getNeoXBlock(reference: NeoXBlockReference): Promise<unknown> {
+    return {
+      chain: "neo-x",
+      network: reference.network ?? "testnet",
+      number: reference.number ?? "123456",
+      hash: reference.hash ?? `0x${"b".repeat(64)}`,
+    };
+  }
+
+  public async getNeoXTransaction(input: {
+    hash: string;
+    network?: NeoXNetwork;
+  }): Promise<unknown> {
+    return {
+      chain: "neo-x",
+      network: input.network ?? "testnet",
+      transaction: {
+        hash: input.hash,
+        from: this.neoXAddress,
+        to: neoXRecipientAddress,
+        value: "1000000000000000000",
+      },
+    };
+  }
+
+  public async getNeoXTransactionReceipt(input: {
+    hash: string;
+    network?: NeoXNetwork;
+  }): Promise<unknown> {
+    return {
+      chain: "neo-x",
+      network: input.network ?? "testnet",
+      receipt: {
+        transactionHash: input.hash,
+        status: "success",
+        blockNumber: "123456",
+      },
+    };
+  }
+
+  public async callNeoXContract(
+    input: NeoXContractCallInput,
+  ): Promise<NeoXContractCallResult> {
+    return {
+      chain: "neo-x",
+      network: input.network ?? "testnet",
+      chainId: this.getNeoXChainId(input.network ?? "testnet"),
+      contractAddress: input.contractAddress,
+      functionName: input.functionName,
+      args: input.args ?? [],
+      result: "42",
+      rpcUrlAlias: "NEOX_TESTNET_RPC_URL",
+    };
+  }
+
+  public async getNeoXErc20Metadata(
+    tokenContract: string,
+    network: NeoXNetwork = "testnet",
+  ): Promise<NeoXErc20Metadata> {
+    return {
+      chain: "neo-x",
+      network,
+      chainId: this.getNeoXChainId(network),
+      contractAddress: tokenContract,
+      name: "Neo X Test Token",
+      symbol: "XTT",
+      decimals: 18,
+      rpcUrlAlias:
+        network === "mainnet" ? "NEOX_MAINNET_RPC_URL" : "NEOX_TESTNET_RPC_URL",
+      explorerUrl: `https://xexplorer.example.com/address/${tokenContract}`,
+    };
+  }
+
+  public async getNeoXErc20Balance(input: {
+    tokenContract: string;
+    owner: string;
+    network?: NeoXNetwork;
+  }): Promise<NeoXErc20Balance> {
+    const metadata = await this.getNeoXErc20Metadata(
+      input.tokenContract,
+      input.network,
+    );
+
+    return {
+      ...metadata,
+      owner: input.owner,
+      rawBalance: "2500000000000000000",
+      formattedBalance: "2.5",
+    };
+  }
+
+  public async getNeoXErc721Owner(input: {
+    contractAddress: string;
+    tokenId: string;
+    network?: NeoXNetwork;
+  }): Promise<NeoXErc721Owner> {
+    const network = input.network ?? "testnet";
+
+    return {
+      chain: "neo-x",
+      network,
+      chainId: this.getNeoXChainId(network),
+      contractAddress: input.contractAddress,
+      tokenId: input.tokenId,
+      owner: this.neoXAddress,
+      rpcUrlAlias: "NEOX_TESTNET_RPC_URL",
+      explorerUrl: `https://xexplorer.example.com/address/${input.contractAddress}`,
+    };
+  }
+
+  public async prepareNeoXNativeTransfer(
+    input: NeoXNativeTransferInput,
+  ): Promise<PreparedTransaction> {
+    const network = input.network ?? "testnet";
+
+    return createPreparedTransaction({
+      action: "neox_prepare_native_transfer",
+      summary: `Prepared a Neo X ${network} GAS transfer of ${input.amount} GAS to ${input.to}.`,
+      network: "neoX",
+      rpcNetwork: network,
+      chainId: this.getNeoXChainId(network),
+      sender: this.neoXAddress,
+      to: input.to,
+      amount: input.amount,
+      tokenSymbol: "GAS",
+      valueWei: "1000000000000000000",
+      gas: "21000",
+      maxFeePerGas: "1000000000",
+      rpcUrlAlias: "NEOX_TESTNET_RPC_URL",
+      transactionRequest: {
+        from: this.neoXAddress,
+        to: input.to,
+      },
+    });
+  }
+
+  public async prepareNeoXErc20Transfer(
+    input: NeoXErc20TransferInput,
+  ): Promise<PreparedTransaction> {
+    const metadata = await this.getNeoXErc20Metadata(
+      input.tokenContract,
+      input.network,
+    );
+
+    return createPreparedTransaction({
+      action: "neox_prepare_erc20_transfer",
+      summary: `Prepared a Neo X ${metadata.network} ERC-20 transfer of ${input.amount} ${metadata.symbol} to ${input.to}.`,
+      network: "neoX",
+      rpcNetwork: metadata.network,
+      chainId: metadata.chainId,
+      sender: this.neoXAddress,
+      to: input.to,
+      amount: input.amount,
+      tokenAddress: input.tokenContract,
+      tokenSymbol: metadata.symbol,
+      contractAddress: input.tokenContract,
+      operation: "transfer",
+      functionName: "transfer",
+      decodedArgs: [input.to, input.amount],
+      valueWei: "0",
+      gas: "65000",
+      maxFeePerGas: "1000000000",
+      rpcUrlAlias: metadata.rpcUrlAlias,
+      transactionRequest: {
+        from: this.neoXAddress,
+        to: input.tokenContract,
+      },
+    });
+  }
+
+  public async prepareNeoXContractWrite(
+    input: NeoXContractWriteInput,
+  ): Promise<PreparedTransaction> {
+    const network = input.network ?? "testnet";
+
+    return createPreparedTransaction({
+      action: "neox_prepare_contract_write",
+      summary: `Prepared a Neo X ${network} contract write ${input.functionName} on ${input.contractAddress}.`,
+      network: "neoX",
+      rpcNetwork: network,
+      chainId: this.getNeoXChainId(network),
+      sender: this.neoXAddress,
+      to: input.contractAddress,
+      amount: input.value,
+      contractAddress: input.contractAddress,
+      operation: input.functionName,
+      functionName: input.functionName,
+      decodedArgs: input.args ?? [],
+      valueWei: "0",
+      gas: "80000",
+      maxFeePerGas: "1000000000",
+      rpcUrlAlias: "NEOX_TESTNET_RPC_URL",
+      transactionRequest: {
+        from: this.neoXAddress,
+        to: input.contractAddress,
+      },
+    });
+  }
+
   public async signAndBroadcast(
     prepared: PreparedTransaction,
   ): Promise<BroadcastResult> {
-    return createBroadcastResult(prepared, this.latestTxHash);
+    return createBroadcastResult(
+      prepared,
+      prepared.network === "neoX" ? this.latestNeoXTxHash : this.latestTxHash,
+    );
   }
 
   public walletEnabled(network?: NeoNetwork): boolean {
@@ -502,23 +777,44 @@ export class FakeNeoProvider implements NeoProvider {
       return true;
     }
 
-    return network === "neoN3";
+    return network === "neoN3" || network === "neoX";
   }
 
-  public async checkReadiness(): Promise<ProviderReadiness> {
+  public async checkReadiness(): Promise<ProviderReadinessStatus> {
     return {
-      network: "neoN3",
-      configuredNetwork: "mainnet",
-      rpcUrl: "https://n3.example.com",
-      rpcReachable: true,
-      networkMagic: 860_833_102,
-      networkMatchesConfiguration: true,
-      walletEnabled: true,
-      walletAddress: this.neoN3Address,
+      neoN3: {
+        network: "neoN3",
+        enabled: true,
+        configuredNetwork: "mainnet",
+        rpcUrlAlias: "NEO_N3_RPC_URL",
+        rpcHost: "n3.example.com",
+        rpcReachable: true,
+        networkMagic: 860_833_102,
+        networkMatchesConfiguration: true,
+        walletEnabled: true,
+        walletAddress: this.neoN3Address,
+      },
+      neoX: {
+        network: "neoX",
+        enabled: true,
+        configuredNetwork: "testnet",
+        rpcUrlAlias: "NEOX_TESTNET_RPC_URL",
+        rpcHost: "x.example.com",
+        rpcReachable: true,
+        chainId: this.getNeoXChainId("testnet"),
+        configuredChainId: this.getNeoXChainId("testnet"),
+        networkMatchesConfiguration: true,
+        walletEnabled: true,
+        walletAddress: this.neoXAddress,
+      },
     };
   }
 
   private normalizeAddress(address: string): string {
     return address === this.neoNsName ? this.neoN3Address : address;
+  }
+
+  private getNeoXChainId(network: NeoXNetwork): number {
+    return network === "mainnet" ? 47_763 : 12_227_332;
   }
 }

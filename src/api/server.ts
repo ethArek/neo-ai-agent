@@ -208,15 +208,21 @@ async function handleReady(
 ): Promise<void> {
   try {
     const readiness = await runtime.getReadinessStatus();
+    const failedNetworks = [readiness.neoN3, readiness.neoX].filter(
+      (entry) =>
+        entry.enabled !== false &&
+        (!entry.rpcReachable || !entry.networkMatchesConfiguration),
+    );
 
-    if (!readiness.neo.networkMatchesConfiguration) {
+    if (failedNetworks.length > 0) {
       throw new AppError("Service is not ready.", {
         code: "NOT_READY",
         statusCode: 503,
         expose: true,
         details: {
           reason:
-            "Configured Neo N3 network does not match the connected RPC network magic.",
+            failedNetworks[0]?.reason ??
+            "One or more configured networks are not ready.",
           readiness,
         },
       });
@@ -227,6 +233,10 @@ async function handleReady(
       ...readiness,
     });
   } catch (error) {
+    if (error instanceof AppError && error.code === "NOT_READY") {
+      throw error;
+    }
+
     throw new AppError("Service is not ready.", {
       code: "NOT_READY",
       statusCode: 503,

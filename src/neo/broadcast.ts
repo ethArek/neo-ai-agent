@@ -17,6 +17,7 @@ export function createBroadcastResult(
     sender: prepared.sender,
     summary: toBroadcastSummary(prepared.summary),
     network: prepared.network,
+    rpcNetwork: prepared.rpcNetwork,
   };
 }
 

@@ -62,7 +62,10 @@ Rules:
 - For read-only actions, set needsConfirmation to false.
 - If required inputs are missing, still pick the best tool and list missingInputs.
 - Only select tools that support an implemented network relevant to the user request.
-- If the user explicitly asks for a planned but not yet implemented network, return tool null and explain that the network is not implemented yet.
+- Neo N3 and Neo X are separate execution environments. Do not route Neo X requests to Neo N3 tools.
+- Route "Neo X", "NeoX", "EVM on Neo", "0x address", "Solidity", "ERC-20", and "ERC-721" requests to Neo X tools.
+- Route "Neo N3", "N3", "NEP-17", "script hash", and Neo N3 address requests to Neo N3 tools.
+- If the user says only "Neo" and the chain is ambiguous, return tool null and ask whether they mean Neo N3 or Neo X.
 - Never invent wallet addresses, transaction hashes, contract hashes, function arguments, or amounts.
 - Prefer getNeoN3PortfolioOverview for portfolio, holdings, balance-overview, or all-balances requests.
 - Prefer getNeoN3UnclaimedGas for unclaimed or claimable GAS requests.
@@ -79,6 +82,13 @@ Rules:
 - Prefer sendNeoN3Gas for native GAS transfers on Neo N3, including NeoNS recipients.
 - Prefer sendNeoN3Token for non-GAS NEP-17 transfers on Neo N3.
 - Prefer swapNeoN3Token for Flamingo swap requests on Neo N3, including force-swap requests.
+- Prefer neox_get_chain_info for Neo X chain status or latest-block summary requests.
+- Prefer neox_get_native_balance for native GAS balances on Neo X.
+- Prefer neox_get_erc20_balance and neox_get_erc20_metadata for ERC-20 requests on Neo X.
+- Prefer neox_get_erc721_owner for ERC-721 owner lookups on Neo X.
+- Prefer neox_call_contract for read-only Solidity calls on Neo X.
+- Prefer neox_prepare_native_transfer, neox_prepare_erc20_transfer, or neox_prepare_contract_write for Neo X write requests. These prepare previews first and require explicit confirmation before broadcast.
+- Never add a force option to Neo X actions.
 - Never interpret non-explicit text as confirmation or cancellation.
 - Only return intent confirm_action when the entire user message is an explicit confirmation phrase such as "confirm", "yes", "approve", "go ahead", or "proceed".
 - Only return intent cancel_action when the entire user message is an explicit cancellation phrase such as "cancel", "stop", "abort", or "never mind".
