@@ -3,6 +3,7 @@ dist
 coverage
 .env
 .env testnet
+.env mainnet
 npm-debug.log*
 AGENTS.md
 DEMO_CLI_INTERACTIVE.md
