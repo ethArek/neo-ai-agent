@@ -26,4 +26,32 @@ describe("SessionStore", () => {
       sessions.getToolSessionContext("session-3").lastReferencedAddress,
     ).toBe("addr-3");
   });
+
+  it("preserves a user-selected default network across context syncs", () => {
+    const sessions = new SessionStore();
+
+    sessions.setNetworkContext("session-1", {
+      defaultNetwork: "neoN3",
+      implementedNetworks: ["neoN3", "neoX"],
+      walletAddresses: {
+        neoN3: "NQ9NEvVrutLL6JDtUMKMrkEG6QpWNxgNBM",
+        neoX: "0xAA00000000000000000000000000000000000001",
+      },
+    });
+    sessions.setDefaultNetwork("session-1", "neoX");
+    sessions.setNetworkContext("session-1", {
+      defaultNetwork: "neoN3",
+      implementedNetworks: ["neoN3", "neoX"],
+      walletAddresses: {
+        neoN3: "NQ9NEvVrutLL6JDtUMKMrkEG6QpWNxgNBM",
+        neoX: "0xAA00000000000000000000000000000000000001",
+      },
+    });
+
+    expect(sessions.getToolSessionContext("session-1")).toMatchObject({
+      defaultNetwork: "neoX",
+      activeNetworkSelected: true,
+      walletAddress: "0xAA00000000000000000000000000000000000001",
+    });
+  });
 });

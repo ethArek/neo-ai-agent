@@ -82,6 +82,7 @@ export interface BroadcastActivity {
 export interface ToolSessionContext {
   id: string;
   defaultNetwork: NeoNetwork;
+  activeNetworkSelected: boolean;
   implementedNetworks: NeoNetwork[];
   walletAddress?: string;
   walletAddresses: NetworkAddressMap;
@@ -143,6 +144,7 @@ export interface PlannerExecutionPolicy {
 
 export interface PlannerContext {
   defaultNetwork: NeoNetwork;
+  activeNetworkSelected: boolean;
   implementedNetworks: NeoNetwork[];
   walletEnabled: boolean;
   pendingAction?: PendingToolAction;

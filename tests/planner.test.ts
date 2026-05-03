@@ -24,6 +24,7 @@ function createContext(
 ): PlannerContext {
   return {
     defaultNetwork: "neoN3",
+    activeNetworkSelected: false,
     implementedNetworks: ["neoN3"],
     walletEnabled: false,
     walletAddresses: {},
@@ -237,6 +238,25 @@ describe("PlannerService", () => {
     expect(plan.arguments).toEqual({});
   });
 
+  it("maps Neo X wallet address requests to getWalletAddress", async () => {
+    const plan = await createPlanner().plan(
+      "show my address on Neo X",
+      createContext({
+        walletEnabled: true,
+        walletAddresses: {
+          neoX: "0xAA00000000000000000000000000000000000001",
+        },
+        implementedNetworks: ["neoN3", "neoX"],
+      }),
+    );
+
+    expect(plan.tool).toBe("getWalletAddress");
+    expect(plan.intent).toBe("get_wallet_address");
+    expect(plan.arguments).toEqual({
+      network: "neoX",
+    });
+  });
+
   it("recognizes confirmation text", async () => {
     const plan = await createPlanner().plan(
       "Confirm",
@@ -265,6 +285,26 @@ describe("PlannerService", () => {
     const plan = await createPlanner().plan(
       "check GAS balance on Neo X",
       createContext({
+        walletEnabled: true,
+        walletAddresses: {
+          neoX: "0xAA00000000000000000000000000000000000001",
+        },
+        implementedNetworks: ["neoN3", "neoX"],
+      }),
+    );
+
+    expect(plan.tool).toBe("neox_get_native_balance");
+    expect(plan.arguments).toMatchObject({
+      address: "0xAA00000000000000000000000000000000000001",
+    });
+  });
+
+  it("uses the selected Neo X chain for generic GAS balance requests", async () => {
+    const plan = await createPlanner().plan(
+      "check GAS balance",
+      createContext({
+        defaultNetwork: "neoX",
+        activeNetworkSelected: true,
         walletEnabled: true,
         walletAddresses: {
           neoX: "0xAA00000000000000000000000000000000000001",

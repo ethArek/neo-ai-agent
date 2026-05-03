@@ -385,6 +385,7 @@ Supported Neo X networks:
 
 Example prompts:
 
+- `Show my address on Neo X`
 - `What is the latest block on Neo X testnet?`
 - `Check GAS balance of 0x... on Neo X`
 - `Check ERC-20 balance for 0x... on Neo X`
@@ -527,6 +528,13 @@ npm run cli -- show portfolio for arkadiusz.neo
 ```bash
 npm run cli -- interactive
 ```
+
+Interactive mode asks you to choose the active chain for the session:
+
+- choose `Neo N3` for Neo addresses, NeoNS, NEP-17, and Flamingo flows
+- choose `Neo X` for 0x addresses, native GAS, ERC-20/ERC-721, and Solidity flows
+- prompts without an explicit chain use the active chain
+- prompts that explicitly mention `Neo N3` or `Neo X` switch the active chain for the rest of the session
 
 This is the best mode if you want to:
 

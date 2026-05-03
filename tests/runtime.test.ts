@@ -529,6 +529,68 @@ describe("AgentRuntime", () => {
     });
   });
 
+  it("loads the Neo X wallet address from a natural-language request", async () => {
+    const provider = new FakeNeoProvider();
+    const runtime = createRuntime(provider);
+
+    const response = await runtime.handleMessage("show my address on Neo X");
+
+    expect(response.tool).toBe("getWalletAddress");
+    expect(response.message).toContain(provider.neoXAddress);
+    expect(response.result).toMatchObject({
+      address: provider.neoXAddress,
+      network: "neoX",
+    });
+  });
+
+  it("uses the selected Neo X chain for generic wallet and balance prompts", async () => {
+    const provider = new FakeNeoProvider();
+    const balanceSpy = jest.spyOn(provider, "getNeoXNativeBalance");
+    const runtime = createRuntime(provider);
+    const sessionId = runtime.startSession("neoX");
+
+    const addressResponse = await runtime.handleMessage(
+      "show my address",
+      sessionId,
+    );
+    const balanceResponse = await runtime.handleMessage(
+      "check GAS balance",
+      sessionId,
+    );
+
+    expect(addressResponse.tool).toBe("getWalletAddress");
+    expect(addressResponse.result).toMatchObject({
+      address: provider.neoXAddress,
+      network: "neoX",
+    });
+    expect(balanceResponse.tool).toBe("neox_get_native_balance");
+    expect(balanceSpy).toHaveBeenCalledWith(provider.neoXAddress, undefined);
+  });
+
+  it("switches the active chain when a prompt explicitly names Neo X", async () => {
+    const provider = new FakeNeoProvider();
+    const runtime = createRuntime(provider);
+
+    const firstResponse = await runtime.handleMessage("show my address");
+    const switchedResponse = await runtime.handleMessage(
+      "show my address on Neo X",
+      firstResponse.sessionId,
+    );
+    const followUpResponse = await runtime.handleMessage(
+      "show my address",
+      firstResponse.sessionId,
+    );
+
+    expect(switchedResponse.result).toMatchObject({
+      address: provider.neoXAddress,
+      network: "neoX",
+    });
+    expect(followUpResponse.result).toMatchObject({
+      address: provider.neoXAddress,
+      network: "neoX",
+    });
+  });
+
   it("uses the resolved Neo X network name in block tool messages", async () => {
     const provider = new FakeNeoProvider();
     const runtime = createRuntime(provider);

@@ -6,6 +6,7 @@ import {
   resolveSessionAddressReference,
 } from "../core/addressResolver";
 import { ValidationError } from "../core/errors";
+import { formatNetworkLabel } from "../core/formatting";
 import { logger } from "../core/logger";
 import { telemetry } from "../core/telemetry";
 import type {
@@ -80,6 +81,11 @@ export class AgentRuntime {
     this.syncSessionNetworkContext(session.id);
     const trimmedMessage = message.trim();
     const normalizedMessage = trimmedMessage.toLowerCase();
+    const explicitNetwork = this.detectExplicitNetworkSwitch(trimmedMessage);
+
+    if (explicitNetwork) {
+      this.setSessionDefaultNetwork(session.id, explicitNetwork);
+    }
 
     if (session.pendingAction && this.isConfirmMessage(normalizedMessage)) {
       return this.confirmPendingAction(session.id, options);
@@ -142,6 +148,7 @@ export class AgentRuntime {
 
     const plan = await this.planner.plan(trimmedMessage, {
       defaultNetwork: session.defaultNetwork,
+      activeNetworkSelected: session.activeNetworkSelected,
       implementedNetworks: session.implementedNetworks,
       walletEnabled: this.neo.walletEnabled(),
       pendingAction: session.pendingAction,
@@ -382,6 +389,31 @@ export class AgentRuntime {
     }
   }
 
+  public startSession(defaultNetwork?: NeoNetwork): string {
+    const session = this.sessions.getOrCreate();
+
+    this.syncSessionNetworkContext(session.id);
+
+    if (defaultNetwork) {
+      this.setSessionDefaultNetwork(session.id, defaultNetwork);
+    }
+
+    return session.id;
+  }
+
+  public setSessionDefaultNetwork(
+    sessionId: string,
+    defaultNetwork: NeoNetwork,
+  ): void {
+    if (!this.neo.getImplementedNetworks().includes(defaultNetwork)) {
+      throw new ValidationError(
+        `${formatNetworkLabel(defaultNetwork)} is not available in this runtime.`,
+      );
+    }
+
+    this.sessions.setDefaultNetwork(sessionId, defaultNetwork);
+  }
+
   private async executePlannedAction(
     sessionId: string,
     plan: PlannerAction,
@@ -472,6 +504,20 @@ export class AgentRuntime {
       implementedNetworks: this.neo.getImplementedNetworks(),
       walletAddresses: this.neo.getWalletAddresses(),
     });
+  }
+
+  private detectExplicitNetworkSwitch(message: string): NeoNetwork | undefined {
+    const lowerMessage = message.trim().toLowerCase();
+    const mentionsNeoX = /\bneo\s*x\b|\bneox\b|\bevm\s+on\s+neo\b/.test(
+      lowerMessage,
+    );
+    const mentionsNeoN3 = /\bneo\s*n3\b|\bon\s+n3\b|\bn3\b/.test(lowerMessage);
+
+    if (mentionsNeoX === mentionsNeoN3) {
+      return undefined;
+    }
+
+    return mentionsNeoX ? "neoX" : "neoN3";
   }
 
   private createDraftAction(plan: PlannerAction): DraftToolAction {

@@ -11,6 +11,7 @@ import type {
 interface AgentSession {
   id: string;
   defaultNetwork: NeoNetwork;
+  activeNetworkSelected: boolean;
   implementedNetworks: NeoNetwork[];
   pendingAction?: PendingToolAction;
   draftAction?: DraftToolAction;
@@ -56,6 +57,7 @@ export class SessionStore {
     const session: AgentSession = {
       id: sessionId ?? randomUUID(),
       defaultNetwork: "neoN3",
+      activeNetworkSelected: false,
       implementedNetworks: ["neoN3"],
       walletAddresses: {},
       lastReferencedAddresses: {},
@@ -111,8 +113,13 @@ export class SessionStore {
     },
   ): void {
     const session = this.getOrCreate(sessionId);
+    const keepSelectedNetwork =
+      session.activeNetworkSelected &&
+      context.implementedNetworks.includes(session.defaultNetwork);
 
-    session.defaultNetwork = context.defaultNetwork;
+    session.defaultNetwork = keepSelectedNetwork
+      ? session.defaultNetwork
+      : context.defaultNetwork;
     session.implementedNetworks = [...context.implementedNetworks];
     session.walletAddresses = {
       ...context.walletAddresses,
@@ -136,6 +143,22 @@ export class SessionStore {
       session.lastReferencedAddress = session.walletAddress;
     }
 
+    session.updatedAt = Date.now();
+  }
+
+  public setDefaultNetwork(
+    sessionId: string,
+    defaultNetwork: NeoNetwork,
+    activeNetworkSelected = true,
+  ): void {
+    const session = this.getOrCreate(sessionId);
+
+    session.defaultNetwork = defaultNetwork;
+    session.activeNetworkSelected = activeNetworkSelected;
+    session.walletAddress = this.selectPrimaryAddress(
+      session.defaultNetwork,
+      session.walletAddresses,
+    );
     session.updatedAt = Date.now();
   }
 
@@ -172,6 +195,7 @@ export class SessionStore {
     return {
       id: session.id,
       defaultNetwork: session.defaultNetwork,
+      activeNetworkSelected: session.activeNetworkSelected,
       implementedNetworks: [...session.implementedNetworks],
       walletAddress: session.walletAddress,
       walletAddresses: {

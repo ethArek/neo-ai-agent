@@ -29,7 +29,7 @@ export const getWalletAddressTool: ToolDefinition<Input, WalletAddressResult> =
     schema: inputSchema,
     async execute(input, context) {
       const parsed = inputSchema.parse(input);
-      const network = parsed.network ?? context.neo.getDefaultNetwork();
+      const network = parsed.network ?? context.session.defaultNetwork;
       const implemented = context.neo
         .getImplementedNetworks()
         .includes(network);

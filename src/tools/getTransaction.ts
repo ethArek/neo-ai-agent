@@ -24,8 +24,11 @@ export const getTransactionTool: ToolDefinition<Input, TransactionDetails> = {
   schema: inputSchema,
   async execute(input, context) {
     const parsed = inputSchema.parse(input);
-    const details = await context.neo.getTransaction(parsed);
-    const network = parsed.network ?? context.neo.getDefaultNetwork();
+    const network = parsed.network ?? context.session.defaultNetwork;
+    const details = await context.neo.getTransaction({
+      ...parsed,
+      network,
+    });
     const vmState = extractVmState(details.applicationLog);
     const vmStateMessage = vmState ? ` VM state: ${vmState}.` : "";
 

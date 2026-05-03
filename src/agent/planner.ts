@@ -181,7 +181,9 @@ export class PlannerService {
       return this.createUnavailableNetworkPlan(requestedNetwork);
     }
 
-    if (this.shouldAskForNeoClarification(lowerMessage, requestedNetwork)) {
+    if (
+      this.shouldAskForNeoClarification(lowerMessage, requestedNetwork, context)
+    ) {
       return {
         intent: "clarify_neo_network",
         tool: null,
@@ -194,7 +196,12 @@ export class PlannerService {
     }
 
     if (
-      this.shouldRouteToNeoX(trimmedMessage, lowerMessage, requestedNetwork)
+      this.shouldRouteToNeoX(
+        trimmedMessage,
+        lowerMessage,
+        requestedNetwork,
+        context,
+      )
     ) {
       return this.createNeoXPlan(trimmedMessage, lowerMessage, context);
     }
@@ -576,10 +583,7 @@ export class PlannerService {
       };
     }
 
-    if (
-      /\bwallet address\b/.test(lowerMessage) ||
-      /\bmy\s+address\b/.test(lowerMessage)
-    ) {
+    if (this.isWalletAddressRequest(lowerMessage)) {
       return {
         intent: "get_wallet_address",
         tool: "getWalletAddress",
@@ -627,7 +631,12 @@ export class PlannerService {
   private shouldAskForNeoClarification(
     message: string,
     requestedNetwork: NeoNetwork | undefined,
+    context: PlannerContext,
   ): boolean {
+    if (context.activeNetworkSelected) {
+      return false;
+    }
+
     if (
       !requestedNetwork &&
       this.shouldClarifyAmbiguousContractAddress(message)
@@ -693,13 +702,30 @@ export class PlannerService {
     message: string,
     lowerMessage: string,
     requestedNetwork: NeoNetwork | undefined,
+    context: PlannerContext,
   ): boolean {
     if (requestedNetwork === "neoX") {
       return true;
     }
 
+    if (requestedNetwork === "neoN3") {
+      return false;
+    }
+
     if (this.hasNeoN3Keyword(lowerMessage)) {
       return false;
+    }
+
+    if (this.isSessionHistoryRequest(lowerMessage)) {
+      return false;
+    }
+
+    if (
+      context.activeNetworkSelected &&
+      context.defaultNetwork === "neoX" &&
+      this.isDefaultNeoXRequest(lowerMessage)
+    ) {
+      return true;
     }
 
     return this.hasNeoXKeyword(lowerMessage) || evmAddressPattern.test(message);
@@ -733,6 +759,19 @@ export class PlannerService {
     const secondAddress = addresses[1];
     const walletAddress = this.getWalletAddress(context, "neoX");
     const transactionHash = this.extractEvmHash(message);
+
+    if (this.isWalletAddressRequest(lowerMessage)) {
+      return {
+        intent: "get_wallet_address",
+        tool: "getWalletAddress",
+        arguments: {
+          network: "neoX",
+        },
+        needsConfirmation: false,
+        missingInputs: [],
+        explanation: "Detected a Neo X wallet address request.",
+      };
+    }
 
     if (/\breceipt\b/.test(lowerMessage) && transactionHash) {
       return {
@@ -1001,7 +1040,8 @@ export class PlannerService {
     }
 
     if (
-      /\b(?:gas|native)\b/.test(lowerMessage) &&
+      (/\b(?:gas|native)\b/.test(lowerMessage) ||
+        (context.activeNetworkSelected && context.defaultNetwork === "neoX")) &&
       /\bbalance\b/.test(lowerMessage)
     ) {
       const address = firstAddress ?? walletAddress;
@@ -1029,6 +1069,39 @@ export class PlannerService {
       missingInputs: [],
       explanation: "Detected a generic Neo X request.",
     };
+  }
+
+  private isWalletAddressRequest(message: string): boolean {
+    return (
+      /\bwallet address\b/.test(message) || /\bmy\s+address\b/.test(message)
+    );
+  }
+
+  private isDefaultNeoXRequest(message: string): boolean {
+    return /\b(?:address|balance|transfer|send|contract|transaction|tx|block|token|wallet)\b/.test(
+      message,
+    );
+  }
+
+  private isSessionHistoryRequest(message: string): boolean {
+    return (
+      /\bstatus\b.*\b(?:last|latest|most recent)\s+(?:transaction|tx)\b/.test(
+        message,
+      ) ||
+      /\b(?:last|latest|most recent)\s+(?:transaction|tx)\b.*\b(?:status|state|check|watch|track)\b/.test(
+        message,
+      ) ||
+      /\bwhat happened to (?:my )?(?:last|latest|most recent)\s+(?:transaction|tx)\b/.test(
+        message,
+      ) ||
+      /\b(?:recent|latest|last)\s+(?:actions|activity|transactions|txs)\b/.test(
+        message,
+      ) ||
+      /\bshow\b.*\b(?:recent|last)\b.*\b(?:actions|activity|transactions|txs)\b/.test(
+        message,
+      ) ||
+      /\b(?:activity|history)\b.*\b(?:transactions|txs|actions)\b/.test(message)
+    );
   }
 
   private createUnavailableNetworkPlan(network: NeoNetwork): PlannerAction {
