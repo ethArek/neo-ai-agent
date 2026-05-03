@@ -52,12 +52,10 @@ function createConfig(n3WalletPrivateKey: string): AppConfig {
         mainnet: {
           name: "mainnet",
           chainId: 47763,
-          rpcUrl: "https://neox-mainnet.example.com",
         },
         testnet: {
           name: "testnet",
           chainId: 12_227_332,
-          rpcUrl: "https://neox-testnet.example.com",
         },
         custom: {
           name: "custom",
@@ -818,13 +816,26 @@ describe("NeoProvider", () => {
       .mockResolvedValue(createVersionResponse(860_833_102));
 
     await expect(provider.checkReadiness()).resolves.toMatchObject({
-      network: "neoN3",
-      configuredNetwork: "mainnet",
-      rpcReachable: true,
-      networkMagic: 860_833_102,
-      networkMatchesConfiguration: true,
-      walletEnabled: true,
-      walletAddress: account.address,
+      neoN3: {
+        network: "neoN3",
+        enabled: true,
+        configuredNetwork: "mainnet",
+        rpcReachable: true,
+        networkMagic: 860_833_102,
+        networkMatchesConfiguration: true,
+        walletEnabled: true,
+        walletAddress: account.address,
+      },
+      neoX: {
+        network: "neoX",
+        enabled: false,
+        configuredNetwork: "testnet",
+        rpcReachable: false,
+        networkMatchesConfiguration: true,
+        walletEnabled: false,
+        walletAddress: undefined,
+        reason: "Neo X testnet RPC is not configured.",
+      },
     });
   });
 
@@ -837,9 +848,11 @@ describe("NeoProvider", () => {
       .mockResolvedValue(createVersionResponse(894_710_606));
 
     await expect(provider.checkReadiness()).resolves.toMatchObject({
-      configuredNetwork: "mainnet",
-      networkMagic: 894_710_606,
-      networkMatchesConfiguration: false,
+      neoN3: {
+        configuredNetwork: "mainnet",
+        networkMagic: 894_710_606,
+        networkMatchesConfiguration: false,
+      },
     });
   });
 
@@ -851,8 +864,10 @@ describe("NeoProvider", () => {
       .mockResolvedValue(createVersionResponse(860_833_102));
 
     await expect(provider.checkReadiness()).resolves.toMatchObject({
-      walletEnabled: false,
-      walletAddress: undefined,
+      neoN3: {
+        walletEnabled: false,
+        walletAddress: undefined,
+      },
     });
   });
 });

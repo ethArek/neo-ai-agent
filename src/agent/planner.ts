@@ -628,6 +628,13 @@ export class PlannerService {
     message: string,
     requestedNetwork: NeoNetwork | undefined,
   ): boolean {
+    if (
+      !requestedNetwork &&
+      this.shouldClarifyAmbiguousContractAddress(message)
+    ) {
+      return true;
+    }
+
     if (requestedNetwork || !/\bneo\b/.test(message)) {
       return false;
     }
@@ -642,6 +649,43 @@ export class PlannerService {
 
     return /\b(?:balance|address|transfer|send|contract|transaction|tx|block|token|wallet)\b/.test(
       message,
+    );
+  }
+
+  private shouldClarifyAmbiguousContractAddress(message: string): boolean {
+    if (!evmAddressPattern.test(message)) {
+      return false;
+    }
+
+    if (this.hasNeoN3Keyword(message) || this.hasNeoXKeyword(message)) {
+      return false;
+    }
+
+    if (/\b(?:call|read|invoke)\b/.test(message)) {
+      return true;
+    }
+
+    if (!/\b(?:prepare|write)\b/.test(message)) {
+      return false;
+    }
+
+    if (/\b(?:send|transfer)\b/.test(message)) {
+      return false;
+    }
+
+    if (/\b(?:contract|function|solidity)\b/.test(message)) {
+      return true;
+    }
+
+    const contractOperationMatch = message.match(
+      /\b(?:prepare|write)\s+([A-Za-z_$][A-Za-z0-9_$]*)\b/i,
+    );
+
+    return Boolean(
+      contractOperationMatch &&
+        !["this", "that", "the"].includes(
+          contractOperationMatch[1].toLowerCase(),
+        ),
     );
   }
 

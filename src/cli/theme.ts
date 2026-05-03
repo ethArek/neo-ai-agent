@@ -34,9 +34,12 @@ function highlightJsonToken(token: string, colorEnabled: boolean): string {
 }
 
 export interface CliNetworkStatus {
+  chainLabel?: string;
   network: string;
   configuredNetwork?: string;
   matchesConfiguration?: boolean;
+  enabled?: boolean;
+  rpcReachable?: boolean;
 }
 
 export interface CliTheme {
@@ -75,21 +78,43 @@ export function createCliTheme(colorEnabled = shouldUseColor()): CliTheme {
         normalizedNetwork === "testnet" ? [1, 30, 42] : [1, 37, 41];
       const badge = applyAnsi(` ${badgeText} `, badgeCodes, colorEnabled);
       const label = applyAnsi("Network:", [1, 36], colorEnabled);
-      const context = applyAnsi("Neo N3", [2, 37], colorEnabled);
+      const context = applyAnsi(
+        typeof status === "string" ? "Neo N3" : (status.chainLabel ?? "Neo N3"),
+        [2, 37],
+        colorEnabled,
+      );
+
+      if (typeof status === "object" && status.enabled === false) {
+        const warning = applyAnsi("(disabled)", [1, 33], colorEnabled);
+
+        return `${label} ${context} ${badge} ${warning}`;
+      }
+
+      if (
+        typeof status === "object" &&
+        status.enabled !== false &&
+        status.rpcReachable === false
+      ) {
+        const warning = applyAnsi("(RPC unavailable)", [1, 33], colorEnabled);
+
+        return `${label} ${context} ${badge} ${warning}`;
+      }
+
       const configuredNetwork =
         typeof status === "string" ? undefined : status.configuredNetwork;
       const isMismatch =
         typeof status === "object" &&
         status.matchesConfiguration === false &&
-        configuredNetwork !== undefined &&
-        configuredNetwork.trim().toLowerCase() !== normalizedNetwork;
+        status.enabled !== false &&
+        status.rpcReachable !== false;
 
       if (isMismatch) {
-        const warning = applyAnsi(
-          `(configured: ${configuredNetwork.toUpperCase()})`,
-          [1, 33],
-          colorEnabled,
-        );
+        const warningText =
+          configuredNetwork !== undefined &&
+          configuredNetwork.trim().toLowerCase() !== normalizedNetwork
+            ? `(configured: ${configuredNetwork.toUpperCase()})`
+            : "(configuration mismatch)";
+        const warning = applyAnsi(warningText, [1, 33], colorEnabled);
 
         return `${label} ${context} ${badge} ${warning}`;
       }

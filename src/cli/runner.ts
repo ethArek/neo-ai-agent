@@ -206,14 +206,27 @@ function resolveNeoN3NetworkFromMagic(
 
 function buildCliNetworkStatus(
   readiness: Awaited<ReturnType<AgentRuntime["getReadinessStatus"]>>,
-): CliNetworkStatus {
-  return {
-    network:
-      resolveNeoN3NetworkFromMagic(readiness.neo.networkMagic) ??
-      readiness.neo.configuredNetwork,
-    configuredNetwork: readiness.neo.configuredNetwork,
-    matchesConfiguration: readiness.neo.networkMatchesConfiguration,
-  };
+): CliNetworkStatus[] {
+  return [
+    {
+      chainLabel: "Neo N3",
+      network:
+        resolveNeoN3NetworkFromMagic(readiness.neoN3.networkMagic) ??
+        readiness.neoN3.configuredNetwork,
+      configuredNetwork: readiness.neoN3.configuredNetwork,
+      enabled: readiness.neoN3.enabled,
+      rpcReachable: readiness.neoN3.rpcReachable,
+      matchesConfiguration: readiness.neoN3.networkMatchesConfiguration,
+    },
+    {
+      chainLabel: "Neo X",
+      network: readiness.neoX.configuredNetwork,
+      configuredNetwork: readiness.neoX.configuredNetwork,
+      enabled: readiness.neoX.enabled,
+      rpcReachable: readiness.neoX.rpcReachable,
+      matchesConfiguration: readiness.neoX.networkMatchesConfiguration,
+    },
+  ];
 }
 
 async function runInteractive(
@@ -229,9 +242,9 @@ async function runInteractive(
   try {
     const readiness = await runtime.getReadinessStatus();
 
-    networkStatusLine = theme.renderNetworkStatus(
-      buildCliNetworkStatus(readiness),
-    );
+    networkStatusLine = buildCliNetworkStatus(readiness)
+      .map((status) => theme.renderNetworkStatus(status))
+      .join("\n");
   } catch {
     // Keep interactive mode usable even if the readiness probe fails.
   }

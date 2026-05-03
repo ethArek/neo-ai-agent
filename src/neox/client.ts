@@ -9,6 +9,7 @@ import {
 } from "../core/errors";
 import {
   evmAddressSchema,
+  evmBlockHashSchema,
   evmTransactionHashSchema,
   positiveDecimalAmountSchema,
 } from "../core/validation";
@@ -29,6 +30,7 @@ import type {
   NeoXNetwork,
   NeoXNetworkConfig,
   PreparedTransaction,
+  ProviderReadiness,
   TransactionStatus,
   TransactionStatusLookup,
 } from "../neo/types";
@@ -67,10 +69,27 @@ interface PreparedFeeFields {
   maxPriorityFeePerGas?: bigint;
 }
 
+interface VerifiedNeoXClient {
+  resolved: ResolvedNeoXClient;
+  chainId: number;
+}
+
 const erc721OwnerAbi = parseAbi([
   "function ownerOf(uint256 tokenId) view returns (address)",
 ]);
 const decimalIntegerPattern = /^(?:0|[1-9]\d*)$/;
+
+function extractRpcHost(rpcUrl: string | undefined): string | undefined {
+  if (!rpcUrl) {
+    return undefined;
+  }
+
+  try {
+    return new URL(rpcUrl).host;
+  } catch {
+    return undefined;
+  }
+}
 
 export class NeoXProvider implements ChainAdapter {
   public readonly chainType = "neo-x";
@@ -126,13 +145,10 @@ export class NeoXProvider implements ChainAdapter {
     network?: NeoXNetwork,
   ): Promise<NeoXNativeBalance> {
     const owner = evmAddressSchema.parse(address);
-    const resolved = this.getResolvedClient(network);
-    const [chainId, rawBalance] = await Promise.all([
-      resolved.client.getChainId(),
-      resolved.client.getBalance({
-        address: owner as Address,
-      }),
-    ]);
+    const { resolved, chainId } = await this.getVerifiedClient(network);
+    const rawBalance = await resolved.client.getBalance({
+      address: owner as Address,
+    });
 
     return {
       chain: "neo-x",
@@ -148,19 +164,28 @@ export class NeoXProvider implements ChainAdapter {
   }
 
   public async getBlock(reference: NeoXBlockReference): Promise<unknown> {
-    const resolved = this.getResolvedClient(reference.network);
+    const blockHash = reference.hash
+      ? (evmBlockHashSchema.parse(reference.hash) as Hex)
+      : undefined;
+    const blockNumber =
+      reference.number !== undefined
+        ? parseBlockNumber(reference.number, "Block number")
+        : undefined;
+    const { resolved, chainId } = await this.getVerifiedClient(
+      reference.network,
+    );
 
     try {
       let block: unknown;
 
-      if (reference.hash) {
+      if (blockHash) {
         block = await resolved.client.getBlock({
-          blockHash: evmTransactionHashSchema.parse(reference.hash) as Hex,
+          blockHash,
           includeTransactions: true,
         });
-      } else if (reference.number !== undefined) {
+      } else if (blockNumber !== undefined) {
         block = await resolved.client.getBlock({
-          blockNumber: parseBlockNumber(reference.number),
+          blockNumber,
           includeTransactions: true,
         });
       } else {
@@ -173,7 +198,7 @@ export class NeoXProvider implements ChainAdapter {
       return {
         chain: "neo-x",
         network: resolved.network,
-        chainId: resolved.config.chainId,
+        chainId,
         rpcUrlAlias: resolved.rpcUrlAlias,
         block: normalizeRpcResult(block),
       };
@@ -189,8 +214,8 @@ export class NeoXProvider implements ChainAdapter {
     hash: string;
     network?: NeoXNetwork;
   }): Promise<unknown> {
-    const resolved = this.getResolvedClient(input.network);
     const hash = evmTransactionHashSchema.parse(input.hash);
+    const { resolved, chainId } = await this.getVerifiedClient(input.network);
 
     try {
       const transaction = await resolved.client.getTransaction({
@@ -200,7 +225,7 @@ export class NeoXProvider implements ChainAdapter {
       return {
         chain: "neo-x",
         network: resolved.network,
-        chainId: resolved.config.chainId,
+        chainId,
         rpcUrlAlias: resolved.rpcUrlAlias,
         explorerUrl: this.buildExplorerUrl(resolved.config, "tx", hash),
         transaction: normalizeRpcResult(transaction),
@@ -217,8 +242,8 @@ export class NeoXProvider implements ChainAdapter {
     hash: string;
     network?: NeoXNetwork;
   }): Promise<unknown> {
-    const resolved = this.getResolvedClient(input.network);
     const hash = evmTransactionHashSchema.parse(input.hash);
+    const { resolved, chainId } = await this.getVerifiedClient(input.network);
 
     try {
       const receipt = await resolved.client.getTransactionReceipt({
@@ -228,7 +253,7 @@ export class NeoXProvider implements ChainAdapter {
       return {
         chain: "neo-x",
         network: resolved.network,
-        chainId: resolved.config.chainId,
+        chainId,
         rpcUrlAlias: resolved.rpcUrlAlias,
         explorerUrl: this.buildExplorerUrl(resolved.config, "tx", hash),
         receipt: normalizeRpcResult(receipt),
@@ -245,9 +270,9 @@ export class NeoXProvider implements ChainAdapter {
     input: TransactionStatusLookup,
   ): Promise<TransactionStatus> {
     const hash = evmTransactionHashSchema.parse(input.hash);
+    const { resolved } = await this.getVerifiedClient(input.rpcNetwork);
 
     try {
-      const resolved = this.getResolvedClient();
       const receipt = await resolved.client.getTransactionReceipt({
         hash: hash as Hex,
       });
@@ -261,7 +286,7 @@ export class NeoXProvider implements ChainAdapter {
           status === "confirmed"
             ? `Neo X transaction ${hash} is confirmed.`
             : `Neo X transaction ${hash} failed.`,
-        blockNumber: Number(receipt.blockNumber),
+        blockNumber: receipt.blockNumber.toString(),
         transaction: null,
         applicationLog: normalizeRpcResult(receipt) as Record<string, unknown>,
       };
@@ -280,19 +305,16 @@ export class NeoXProvider implements ChainAdapter {
   public async callContract(
     input: NeoXContractCallInput,
   ): Promise<NeoXContractCallResult> {
-    const resolved = this.getResolvedClient(input.network);
     const contractAddress = evmAddressSchema.parse(input.contractAddress);
     const abi = normalizeAbi(input.abi, input.functionName);
     const args = input.args ?? [];
-    const [chainId, result] = await Promise.all([
-      resolved.client.getChainId(),
-      resolved.client.readContract({
-        address: contractAddress as Address,
-        abi,
-        functionName: input.functionName,
-        args,
-      }),
-    ]);
+    const { resolved, chainId } = await this.getVerifiedClient(input.network);
+    const result = await resolved.client.readContract({
+      address: contractAddress as Address,
+      abi,
+      functionName: input.functionName,
+      args,
+    });
 
     return {
       chain: "neo-x",
@@ -310,10 +332,9 @@ export class NeoXProvider implements ChainAdapter {
     tokenContract: string,
     network?: NeoXNetwork,
   ): Promise<NeoXErc20Metadata> {
-    const resolved = this.getResolvedClient(network);
+    const { resolved, chainId } = await this.getVerifiedClient(network);
     const contractAddress = evmAddressSchema.parse(tokenContract);
-    const [chainId, name, symbol, decimals] = await Promise.all([
-      resolved.client.getChainId(),
+    const [name, symbol, decimals] = await Promise.all([
       this.readErc20String(resolved, contractAddress, "name"),
       this.readErc20String(resolved, contractAddress, "symbol"),
       this.readErc20Decimals(resolved, contractAddress),
@@ -346,7 +367,7 @@ export class NeoXProvider implements ChainAdapter {
       input.tokenContract,
       input.network,
     );
-    const resolved = this.getResolvedClient(input.network);
+    const { resolved } = await this.getVerifiedClient(input.network);
     const rawBalance = await resolved.client.readContract({
       address: metadata.contractAddress as Address,
       abi: erc20Abi,
@@ -373,18 +394,15 @@ export class NeoXProvider implements ChainAdapter {
     tokenId: string;
     network?: NeoXNetwork;
   }): Promise<NeoXErc721Owner> {
-    const resolved = this.getResolvedClient(input.network);
     const contractAddress = evmAddressSchema.parse(input.contractAddress);
-    const tokenId = parseBlockNumber(input.tokenId);
-    const [chainId, owner] = await Promise.all([
-      resolved.client.getChainId(),
-      resolved.client.readContract({
-        address: contractAddress as Address,
-        abi: erc721OwnerAbi,
-        functionName: "ownerOf",
-        args: [tokenId],
-      }),
-    ]);
+    const tokenId = parseBlockNumber(input.tokenId, "tokenId");
+    const { resolved, chainId } = await this.getVerifiedClient(input.network);
+    const owner = await resolved.client.readContract({
+      address: contractAddress as Address,
+      abi: erc721OwnerAbi,
+      functionName: "ownerOf",
+      args: [tokenId],
+    });
 
     if (typeof owner !== "string") {
       throw new NeoRpcError(
@@ -412,10 +430,10 @@ export class NeoXProvider implements ChainAdapter {
     input: NeoXNativeTransferInput,
   ): Promise<PreparedTransaction> {
     const account = this.requireWallet();
-    const resolved = this.getResolvedClient(input.network);
     const to = evmAddressSchema.parse(input.to);
     const amount = positiveDecimalAmountSchema.parse(input.amount);
-    const valueWei = parseEther(amount);
+    const { resolved } = await this.getVerifiedClient(input.network);
+    const valueWei = this.parseNativeAmount(amount);
     const fees = await this.estimateTransaction(resolved, {
       account: account.address,
       to: to as Address,
@@ -444,14 +462,18 @@ export class NeoXProvider implements ChainAdapter {
     input: NeoXErc20TransferInput,
   ): Promise<PreparedTransaction> {
     const account = this.requireWallet();
-    const resolved = this.getResolvedClient(input.network);
     const token = await this.getErc20Metadata(
       input.tokenContract,
-      resolved.network,
+      input.network,
     );
+    const { resolved } = await this.getVerifiedClient(token.network);
     const to = evmAddressSchema.parse(input.to);
     const amount = positiveDecimalAmountSchema.parse(input.amount);
-    const rawAmount = parseUnits(amount, token.decimals);
+    const rawAmount = this.parseTokenAmount(
+      amount,
+      token.decimals,
+      token.symbol,
+    );
     const data = encodeFunctionData({
       abi: erc20Abi,
       functionName: "transfer",
@@ -493,11 +515,11 @@ export class NeoXProvider implements ChainAdapter {
     input: NeoXContractWriteInput,
   ): Promise<PreparedTransaction> {
     const account = this.requireWallet();
-    const resolved = this.getResolvedClient(input.network);
     const contractAddress = evmAddressSchema.parse(input.contractAddress);
     const abi = normalizeAbi(input.abi, input.functionName);
     const args = input.args ?? [];
-    const valueWei = input.value ? parseEther(input.value) : 0n;
+    const { resolved } = await this.getVerifiedClient(input.network);
+    const valueWei = input.value ? this.parseNativeAmount(input.value) : 0n;
     const data = encodeFunctionData({
       abi,
       functionName: input.functionName,
@@ -537,16 +559,112 @@ export class NeoXProvider implements ChainAdapter {
     prepared: PreparedTransaction,
   ): Promise<BroadcastResult> {
     const account = this.requireWallet();
-    const resolved = this.getResolvedClient(prepared.rpcNetwork);
+    const { resolved } = await this.getVerifiedClient(prepared.rpcNetwork);
     const walletClient = createWalletClient({
       account,
       chain: resolved.chain,
       transport: http(this.requireRpcUrl(resolved.config)),
     });
-    const request = this.parsePreparedTransactionRequest(prepared);
-    const txHash = await walletClient.sendTransaction(request);
+    const request = buildPreparedNeoXTransactionRequest(prepared);
+    const txHash =
+      request.maxFeePerGas !== undefined ||
+      request.maxPriorityFeePerGas !== undefined
+        ? await walletClient.sendTransaction({
+            to: request.to,
+            value: request.value,
+            data: request.data,
+            gas: request.gas,
+            maxFeePerGas: request.maxFeePerGas,
+            maxPriorityFeePerGas: request.maxPriorityFeePerGas,
+          })
+        : await walletClient.sendTransaction({
+            to: request.to,
+            value: request.value,
+            data: request.data,
+            gas: request.gas,
+            gasPrice: request.gasPrice,
+          });
 
     return createBroadcastResult(prepared, txHash);
+  }
+
+  public async checkReadiness(): Promise<ProviderReadiness> {
+    const network = this.config.neoX.defaultNetwork;
+    const config = this.config.neoX.networks[network];
+    const rpcUrlAlias = this.getRpcUrlAlias(network);
+    const rpcHost = extractRpcHost(config.rpcUrl);
+    const configuredChainId = config.chainId;
+    const walletEnabled = this.walletEnabled();
+    const walletAddress = this.getWalletAddress();
+    const enabled = Boolean(config.rpcUrl || walletEnabled);
+
+    if (!config.rpcUrl) {
+      return {
+        network: "neoX",
+        enabled,
+        configuredNetwork: network,
+        rpcUrlAlias,
+        rpcHost,
+        rpcReachable: false,
+        configuredChainId,
+        networkMatchesConfiguration: !enabled,
+        walletEnabled,
+        walletAddress,
+        reason: `Neo X ${network} RPC is not configured.`,
+      };
+    }
+
+    if (!configuredChainId) {
+      return {
+        network: "neoX",
+        enabled,
+        configuredNetwork: network,
+        rpcUrlAlias,
+        rpcHost,
+        rpcReachable: false,
+        networkMatchesConfiguration: !enabled,
+        walletEnabled,
+        walletAddress,
+        reason: `Neo X ${network} chain ID is not configured.`,
+      };
+    }
+
+    try {
+      const resolved = this.getResolvedClient(network);
+      const chainId = await resolved.client.getChainId();
+      const networkMatchesConfiguration = chainId === configuredChainId;
+
+      return {
+        network: "neoX",
+        enabled,
+        configuredNetwork: network,
+        rpcUrlAlias,
+        rpcHost,
+        rpcReachable: true,
+        chainId,
+        configuredChainId,
+        networkMatchesConfiguration,
+        walletEnabled,
+        walletAddress,
+        reason: networkMatchesConfiguration
+          ? undefined
+          : `Configured Neo X ${network} chain ID ${configuredChainId} does not match the connected RPC chain ID ${chainId}.`,
+      };
+    } catch (error) {
+      return {
+        network: "neoX",
+        enabled,
+        configuredNetwork: network,
+        rpcUrlAlias,
+        rpcHost,
+        rpcReachable: false,
+        configuredChainId,
+        networkMatchesConfiguration: false,
+        walletEnabled,
+        walletAddress,
+        reason: error instanceof Error ? error.message : String(error),
+      };
+    }
   }
 
   private getResolvedClient(network?: NeoXNetwork): ResolvedNeoXClient {
@@ -696,6 +814,14 @@ export class NeoXProvider implements ChainAdapter {
     const gasPrice = await resolved.client.getGasPrice().catch(() => undefined);
     const fees = await resolved.client.estimateFeesPerGas().catch(() => null);
 
+    if (fees?.maxFeePerGas || fees?.maxPriorityFeePerGas) {
+      return {
+        gas,
+        maxFeePerGas: fees?.maxFeePerGas,
+        maxPriorityFeePerGas: fees?.maxPriorityFeePerGas,
+      };
+    }
+
     return {
       gas,
       gasPrice,
@@ -764,22 +890,48 @@ export class NeoXProvider implements ChainAdapter {
     };
   }
 
-  private parsePreparedTransactionRequest(prepared: PreparedTransaction): {
-    to: Address;
-    value?: bigint;
-    data?: Hex;
-    gas?: bigint;
-  } {
-    if (prepared.network !== "neoX" || !prepared.to) {
-      throw new ValidationError("Prepared transaction is not a Neo X request.");
+  private async getVerifiedClient(
+    network?: NeoXNetwork,
+  ): Promise<VerifiedNeoXClient> {
+    const resolved = this.getResolvedClient(network);
+    const chainId = await resolved.client.getChainId();
+
+    if (chainId !== resolved.config.chainId) {
+      throw new NeoRpcError(
+        `Configured Neo X ${resolved.network} chain ID ${resolved.config.chainId} does not match the connected RPC chain ID ${chainId}.`,
+      );
     }
 
     return {
-      to: evmAddressSchema.parse(prepared.to) as Address,
-      value: prepared.valueWei ? BigInt(prepared.valueWei) : undefined,
-      data: prepared.data as Hex | undefined,
-      gas: prepared.gas ? BigInt(prepared.gas) : undefined,
+      resolved,
+      chainId,
     };
+  }
+
+  private parseNativeAmount(amount: string): bigint {
+    try {
+      return parseEther(amount);
+    } catch (error) {
+      throw new ValidationError(
+        "Amount must be a valid GAS decimal string with up to 18 decimal places.",
+        error instanceof Error ? error.message : error,
+      );
+    }
+  }
+
+  private parseTokenAmount(
+    amount: string,
+    decimals: number,
+    symbol: string,
+  ): bigint {
+    try {
+      return parseUnits(amount, decimals);
+    } catch (error) {
+      throw new ValidationError(
+        `Amount must be a valid ${symbol} decimal string with up to ${decimals} decimal places.`,
+        error instanceof Error ? error.message : error,
+      );
+    }
   }
 
   private buildExplorerUrl(
@@ -793,6 +945,36 @@ export class NeoXProvider implements ChainAdapter {
 
     return `${config.explorerBaseUrl.replace(/\/+$/, "")}/${kind}/${value}`;
   }
+}
+
+export function buildPreparedNeoXTransactionRequest(
+  prepared: PreparedTransaction,
+): {
+  to: Address;
+  value?: bigint;
+  data?: Hex;
+  gas?: bigint;
+  gasPrice?: bigint;
+  maxFeePerGas?: bigint;
+  maxPriorityFeePerGas?: bigint;
+} {
+  if (prepared.network !== "neoX" || !prepared.to) {
+    throw new ValidationError("Prepared transaction is not a Neo X request.");
+  }
+
+  return {
+    to: evmAddressSchema.parse(prepared.to) as Address,
+    value: prepared.valueWei ? BigInt(prepared.valueWei) : undefined,
+    data: prepared.data as Hex | undefined,
+    gas: prepared.gas ? BigInt(prepared.gas) : undefined,
+    gasPrice: prepared.gasPrice ? BigInt(prepared.gasPrice) : undefined,
+    maxFeePerGas: prepared.maxFeePerGas
+      ? BigInt(prepared.maxFeePerGas)
+      : undefined,
+    maxPriorityFeePerGas: prepared.maxPriorityFeePerGas
+      ? BigInt(prepared.maxPriorityFeePerGas)
+      : undefined,
+  };
 }
 
 function normalizeAbi(abiInput: unknown, functionName: string): Abi {
@@ -815,11 +997,16 @@ function normalizeAbi(abiInput: unknown, functionName: string): Abi {
     ) {
       abi = parseAbi(abiInput);
     } else if (Array.isArray(abiInput)) {
+      validateJsonAbi(abiInput);
       abi = abiInput as Abi;
     } else {
       throw new Error("ABI input is not supported.");
     }
   } catch (error) {
+    if (error instanceof ValidationError) {
+      throw error;
+    }
+
     throw new ValidationError(
       "ABI must be a JSON ABI array or human-readable function signature.",
       error instanceof Error ? error.message : error,
@@ -846,11 +1033,109 @@ function normalizeAbi(abiInput: unknown, functionName: string): Abi {
   return abi;
 }
 
-function parseBlockNumber(value: string): bigint {
+function validateJsonAbi(abi: unknown[]): void {
+  abi.forEach((entry, index) => {
+    validateJsonAbiEntry(entry, `ABI entry ${index}`);
+  });
+}
+
+function validateJsonAbiEntry(value: unknown, label: string): void {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new ValidationError(`${label} must be a JSON object.`);
+  }
+
+  const entry = value as Record<string, unknown>;
+
+  if (typeof entry.type !== "string" || entry.type.trim() === "") {
+    throw new ValidationError(`${label} must include a string 'type' field.`);
+  }
+
+  const entryType = entry.type.trim();
+
+  if (["function", "constructor", "event", "error"].includes(entryType)) {
+    if (!Array.isArray(entry.inputs)) {
+      throw new ValidationError(`${label} must include an 'inputs' array.`);
+    }
+
+    entry.inputs.forEach((input, index) => {
+      validateJsonAbiParameter(input, `${label} input ${index}`);
+    });
+  }
+
+  if (entryType === "function") {
+    if (typeof entry.name !== "string" || entry.name.trim() === "") {
+      throw new ValidationError(`${label} must include a function name.`);
+    }
+
+    if (entry.outputs !== undefined) {
+      if (!Array.isArray(entry.outputs)) {
+        throw new ValidationError(`${label} outputs must be an array.`);
+      }
+
+      entry.outputs.forEach((output, index) => {
+        validateJsonAbiParameter(output, `${label} output ${index}`);
+      });
+    }
+
+    if (
+      entry.stateMutability !== undefined &&
+      !["pure", "view", "nonpayable", "payable"].includes(
+        String(entry.stateMutability),
+      )
+    ) {
+      throw new ValidationError(
+        `${label} has an invalid stateMutability value.`,
+      );
+    }
+  }
+
+  if (entryType === "event" || entryType === "error") {
+    if (typeof entry.name !== "string" || entry.name.trim() === "") {
+      throw new ValidationError(`${label} must include a name.`);
+    }
+  }
+}
+
+function validateJsonAbiParameter(value: unknown, label: string): void {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new ValidationError(`${label} must be a JSON object.`);
+  }
+
+  const parameter = value as Record<string, unknown>;
+
+  if (typeof parameter.type !== "string" || parameter.type.trim() === "") {
+    throw new ValidationError(`${label} must include a string 'type' field.`);
+  }
+
+  if (parameter.name !== undefined && typeof parameter.name !== "string") {
+    throw new ValidationError(`${label} name must be a string.`);
+  }
+
+  if (
+    parameter.internalType !== undefined &&
+    typeof parameter.internalType !== "string"
+  ) {
+    throw new ValidationError(`${label} internalType must be a string.`);
+  }
+
+  if (parameter.components !== undefined) {
+    if (!Array.isArray(parameter.components)) {
+      throw new ValidationError(`${label} components must be an array.`);
+    }
+
+    parameter.components.forEach((component, index) => {
+      validateJsonAbiParameter(component, `${label} component ${index}`);
+    });
+  }
+}
+
+function parseBlockNumber(value: string, label: string): bigint {
   const normalized = value.trim();
 
   if (!decimalIntegerPattern.test(normalized)) {
-    throw new ValidationError("Block number and token IDs must be integers.");
+    throw new ValidationError(
+      `${label} must be a non-negative integer string.`,
+    );
   }
 
   return BigInt(normalized);

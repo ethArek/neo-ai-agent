@@ -2,10 +2,14 @@ import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 
 import { encodeFunctionResult, erc20Abi } from "viem";
+import * as viem from "viem";
 
 import type { AppConfig } from "../src/core/config";
-import { ProviderCapabilityError } from "../src/core/errors";
-import { NeoXProvider } from "../src/neox/client";
+import { ProviderCapabilityError, ValidationError } from "../src/core/errors";
+import {
+  buildPreparedNeoXTransactionRequest,
+  NeoXProvider,
+} from "../src/neox/client";
 
 interface JsonRpcRequest {
   id?: string | number | null;
@@ -22,6 +26,9 @@ const privateKey =
 function createConfig(input: {
   rpcUrl?: string;
   walletPrivateKey?: string;
+  customRpcUrl?: string;
+  customChainId?: number;
+  defaultNetwork?: "mainnet" | "testnet" | "custom";
 }): AppConfig {
   return {
     port: 3000,
@@ -46,7 +53,7 @@ function createConfig(input: {
       flamingoPairs: [],
     },
     neoX: {
-      defaultNetwork: "testnet",
+      defaultNetwork: input.defaultNetwork ?? "testnet",
       nativeCurrencySymbol: "GAS",
       walletPrivateKey: input.walletPrivateKey,
       walletEnabled: Boolean(input.walletPrivateKey),
@@ -63,6 +70,8 @@ function createConfig(input: {
         },
         custom: {
           name: "custom",
+          rpcUrl: input.customRpcUrl,
+          chainId: input.customChainId,
         },
       },
     },
@@ -331,6 +340,153 @@ describe("NeoXProvider", () => {
         valueWei: "1000000000000000000",
         gas: "21000",
       });
+      expect(buildPreparedNeoXTransactionRequest(prepared)).toMatchObject({
+        gas: 21_000n,
+        gasPrice: 1_000_000_000n,
+      });
+    } finally {
+      await closeServer(rpc.server);
+    }
+  });
+
+  it("passes the previewed fee fields into the Neo X broadcast request", async () => {
+    const rpc = await createRpcServer(createHappyRpcHandler);
+
+    try {
+      const provider = new NeoXProvider(
+        createConfig({
+          rpcUrl: rpc.url,
+          walletPrivateKey: privateKey,
+        }),
+      );
+      const prepared = await provider.prepareNativeTransfer({
+        to: ownerAddress,
+        amount: "1",
+      });
+      const sendTransaction = jest
+        .fn<Promise<string>, [Record<string, unknown>]>()
+        .mockResolvedValue(`0x${"a".repeat(64)}`);
+      const walletClientSpy = jest
+        .spyOn(viem, "createWalletClient")
+        .mockReturnValue({
+          sendTransaction,
+        } as never);
+
+      try {
+        await expect(
+          provider.signAndBroadcast(prepared),
+        ).resolves.toMatchObject({
+          txHash: `0x${"a".repeat(64)}`,
+          network: "neoX",
+          rpcNetwork: "testnet",
+        });
+      } finally {
+        walletClientSpy.mockRestore();
+      }
+
+      expect(sendTransaction).toHaveBeenCalledWith({
+        to: ownerAddress,
+        value: 1_000_000_000_000_000_000n,
+        data: undefined,
+        gas: 21_000n,
+        gasPrice: 1_000_000_000n,
+      });
+    } finally {
+      await closeServer(rpc.server);
+    }
+  });
+
+  it("fails closed when the connected Neo X chain ID does not match configuration", async () => {
+    const methods: string[] = [];
+    const rpc = await createRpcServer((request) => {
+      methods.push(request.method);
+
+      if (request.method === "eth_chainId") {
+        return toHexQuantity(47_763);
+      }
+
+      return createHappyRpcHandler(request);
+    });
+
+    try {
+      const provider = new NeoXProvider(createConfig({ rpcUrl: rpc.url }));
+
+      await expect(provider.getNativeBalance(ownerAddress)).rejects.toThrow(
+        "Configured Neo X testnet chain ID 12227332 does not match the connected RPC chain ID 47763.",
+      );
+      expect(methods).toEqual(["eth_chainId"]);
+    } finally {
+      await closeServer(rpc.server);
+    }
+  });
+
+  it("rejects malformed JSON ABI entries before making Neo X RPC calls", async () => {
+    const methods: string[] = [];
+    const rpc = await createRpcServer((request) => {
+      methods.push(request.method);
+
+      return createHappyRpcHandler(request);
+    });
+
+    try {
+      const provider = new NeoXProvider(createConfig({ rpcUrl: rpc.url }));
+
+      await expect(
+        provider.callContract({
+          contractAddress: tokenContract,
+          abi: [
+            {
+              type: "function",
+              name: "balanceOf",
+            },
+          ],
+          functionName: "balanceOf",
+          args: [ownerAddress],
+        }),
+      ).rejects.toThrow(ValidationError);
+      await expect(
+        provider.callContract({
+          contractAddress: tokenContract,
+          abi: [
+            {
+              type: "function",
+              name: "balanceOf",
+            },
+          ],
+          functionName: "balanceOf",
+          args: [ownerAddress],
+        }),
+      ).rejects.toThrow("ABI entry 0 must include an 'inputs' array.");
+      expect(methods).toEqual([]);
+    } finally {
+      await closeServer(rpc.server);
+    }
+  });
+
+  it("returns block-specific validation messages for invalid block references", async () => {
+    const methods: string[] = [];
+    const rpc = await createRpcServer((request) => {
+      methods.push(request.method);
+
+      return createHappyRpcHandler(request);
+    });
+
+    try {
+      const provider = new NeoXProvider(createConfig({ rpcUrl: rpc.url }));
+
+      await expect(provider.getBlock({ number: "abc" })).rejects.toThrow(
+        "Block number must be a non-negative integer string.",
+      );
+      await expect(provider.getBlock({ hash: "0x1234" })).rejects.toThrow(
+        "Invalid EVM block hash.",
+      );
+      await expect(
+        provider.getErc721Owner({
+          contractAddress: tokenContract,
+          tokenId: "abc",
+        }),
+      ).rejects.toThrow("tokenId must be a non-negative integer string.");
+      expect(methods).toEqual([]);
     } finally {
       await closeServer(rpc.server);
     }
@@ -344,6 +500,39 @@ describe("NeoXProvider", () => {
     );
     await expect(provider.getChainInfo()).rejects.toThrow(
       "Neo X testnet RPC is not configured.",
+    );
+  });
+
+  it("rejects custom Neo X requests when the custom RPC URL is missing", async () => {
+    const provider = new NeoXProvider(
+      createConfig({ rpcUrl: "http://unused" }),
+    );
+
+    await expect(
+      provider.getNativeBalance(ownerAddress, "custom"),
+    ).rejects.toThrow(ProviderCapabilityError);
+    await expect(
+      provider.getNativeBalance(ownerAddress, "custom"),
+    ).rejects.toThrow(
+      "Neo X custom RPC is not configured. Set NEOX_CUSTOM_RPC_URL before using Neo X tools.",
+    );
+  });
+
+  it("rejects custom Neo X requests when the custom chain ID is missing", async () => {
+    const provider = new NeoXProvider(
+      createConfig({
+        rpcUrl: "http://unused",
+        customRpcUrl: "http://127.0.0.1:8545",
+      }),
+    );
+
+    await expect(
+      provider.getNativeBalance(ownerAddress, "custom"),
+    ).rejects.toThrow(ProviderCapabilityError);
+    await expect(
+      provider.getNativeBalance(ownerAddress, "custom"),
+    ).rejects.toThrow(
+      "Neo X custom chain ID is not configured. Set NEOX_CUSTOM_CHAIN_ID for custom Neo X networks.",
     );
   });
 

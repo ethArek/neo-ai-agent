@@ -17,6 +17,36 @@ describe("createCliTheme", () => {
         matchesConfiguration: false,
       }),
     ).toBe("Network: Neo N3  TESTNET  (configured: MAINNET)");
+    expect(
+      theme.renderNetworkStatus({
+        chainLabel: "Neo X",
+        network: "mainnet",
+        configuredNetwork: "mainnet",
+        enabled: false,
+        rpcReachable: false,
+        matchesConfiguration: false,
+      }),
+    ).toBe("Network: Neo X  MAINNET  (disabled)");
+    expect(
+      theme.renderNetworkStatus({
+        chainLabel: "Neo X",
+        network: "testnet",
+        configuredNetwork: "testnet",
+        enabled: true,
+        rpcReachable: false,
+        matchesConfiguration: false,
+      }),
+    ).toBe("Network: Neo X  TESTNET  (RPC unavailable)");
+    expect(
+      theme.renderNetworkStatus({
+        chainLabel: "Neo X",
+        network: "mainnet",
+        configuredNetwork: "mainnet",
+        enabled: true,
+        rpcReachable: true,
+        matchesConfiguration: false,
+      }),
+    ).toBe("Network: Neo X  MAINNET  (configuration mismatch)");
     expect(theme.renderPrompt()).toBe("neo> ");
     expect(theme.renderJson({ amount: 1, confirmed: true })).toBe(
       JSON.stringify(

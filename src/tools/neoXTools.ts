@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { ToolDefinition } from "../agent/types";
 import {
   evmAddressSchema,
+  evmBlockHashSchema,
   evmTransactionHashSchema,
   positiveDecimalAmountSchema,
 } from "../core/validation";
@@ -41,7 +42,7 @@ const nativeBalanceInputSchema = z.object({
 const blockInputSchema = z
   .object({
     number: tokenIdSchema.optional(),
-    hash: evmTransactionHashSchema.optional(),
+    hash: evmBlockHashSchema.optional(),
     tag: z.literal("latest").optional(),
     network: neoXNetworkSchema,
   })
@@ -174,9 +175,16 @@ export const neoXGetBlockTool: ToolDefinition<
       tag: parsed.tag ?? "latest",
       network: parsed.network,
     });
+    const resolvedNetwork =
+      typeof block === "object" &&
+      block !== null &&
+      "network" in block &&
+      typeof block.network === "string"
+        ? block.network
+        : (parsed.network ?? "default");
 
     return {
-      message: `Loaded Neo X ${parsed.network ?? "default"} block ${parsed.hash ?? parsed.number ?? "latest"}.`,
+      message: `Loaded Neo X ${resolvedNetwork} block ${parsed.hash ?? parsed.number ?? "latest"}.`,
       data: block,
     };
   },

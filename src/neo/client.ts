@@ -57,6 +57,7 @@ import type {
   NetworkAddressMap,
   PreparedTransaction,
   ProviderReadiness,
+  ProviderReadinessStatus,
   TokenBalance,
   TokenMetadata,
   TransactionDetails,
@@ -137,6 +138,18 @@ interface NeoN3StructuredArgument {
 
 const neoNsTextRecordType = "16";
 const decimalPattern = /^(?:0|[1-9]\d*)(?:\.\d+)?$/;
+
+function extractRpcHost(rpcUrl: string | undefined): string | undefined {
+  if (!rpcUrl) {
+    return undefined;
+  }
+
+  try {
+    return new URL(rpcUrl).host;
+  } catch {
+    return undefined;
+  }
+}
 
 function normalizeResult(value: unknown): unknown {
   if (typeof value === "bigint") {
@@ -966,22 +979,45 @@ export class NeoN3Provider {
   }
 
   public async checkReadiness(): Promise<ProviderReadiness> {
-    const networkMagic = await this.getNeoN3NetworkMagic();
     const expectedMagic =
       this.config.neoN3.network === "testnet"
         ? neoN3TestnetNetworkMagic
         : neoN3MainnetNetworkMagic;
+    const rpcHost = extractRpcHost(this.config.neoN3.rpcUrl);
 
-    return {
-      network: "neoN3",
-      configuredNetwork: this.config.neoN3.network,
-      rpcUrl: this.config.neoN3.rpcUrl,
-      rpcReachable: true,
-      networkMagic,
-      networkMatchesConfiguration: networkMagic === expectedMagic,
-      walletEnabled: this.walletEnabled("neoN3"),
-      walletAddress: this.neoN3Wallet?.address,
-    };
+    try {
+      const networkMagic = await this.getNeoN3NetworkMagic();
+      const networkMatchesConfiguration = networkMagic === expectedMagic;
+
+      return {
+        network: "neoN3",
+        enabled: true,
+        configuredNetwork: this.config.neoN3.network,
+        rpcUrlAlias: "NEO_N3_RPC_URL",
+        rpcHost,
+        rpcReachable: true,
+        networkMagic,
+        networkMatchesConfiguration,
+        walletEnabled: this.walletEnabled("neoN3"),
+        walletAddress: this.neoN3Wallet?.address,
+        reason: networkMatchesConfiguration
+          ? undefined
+          : `Configured Neo N3 ${this.config.neoN3.network} network does not match the connected RPC network magic.`,
+      };
+    } catch (error) {
+      return {
+        network: "neoN3",
+        enabled: true,
+        configuredNetwork: this.config.neoN3.network,
+        rpcUrlAlias: "NEO_N3_RPC_URL",
+        rpcHost,
+        rpcReachable: false,
+        networkMatchesConfiguration: false,
+        walletEnabled: this.walletEnabled("neoN3"),
+        walletAddress: this.neoN3Wallet?.address,
+        reason: error instanceof Error ? error.message : String(error),
+      };
+    }
   }
 
   private buildNeoN3PreparedTransaction(
@@ -2479,8 +2515,16 @@ class CompositeNeoProvider implements NeoProvider {
     return this.neoN3.walletEnabled("neoN3") || this.neoX.walletEnabled();
   }
 
-  public checkReadiness(): Promise<ProviderReadiness> {
-    return this.neoN3.checkReadiness();
+  public async checkReadiness(): Promise<ProviderReadinessStatus> {
+    const [neoN3, neoX] = await Promise.all([
+      this.neoN3.checkReadiness(),
+      this.neoX.checkReadiness(),
+    ]);
+
+    return {
+      neoN3,
+      neoX,
+    };
   }
 }
 

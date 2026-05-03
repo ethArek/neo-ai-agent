@@ -863,6 +863,7 @@ export class AgentRuntime {
       arguments: argumentsPayload,
       txHash: result.txHash,
       network: result.network,
+      rpcNetwork: result.rpcNetwork,
       sender: result.sender,
       summary: result.summary,
       createdAt: new Date().toISOString(),
@@ -955,6 +956,7 @@ export class AgentRuntime {
     let latestStatus = await this.neo.getTransactionStatus({
       hash: broadcast.txHash,
       network: broadcast.network,
+      rpcNetwork: broadcast.rpcNetwork,
     });
     let waitingLabelEmitted = false;
 
@@ -974,6 +976,7 @@ export class AgentRuntime {
       latestStatus = await this.neo.getTransactionStatus({
         hash: broadcast.txHash,
         network: broadcast.network,
+        rpcNetwork: broadcast.rpcNetwork,
       });
     }
 
@@ -1188,12 +1191,16 @@ export class AgentRuntime {
   }
 
   public async getReadinessStatus(): Promise<{
-    neo: Awaited<ReturnType<NeoProvider["checkReadiness"]>>;
+    neoN3: Awaited<ReturnType<NeoProvider["checkReadiness"]>>["neoN3"];
+    neoX: Awaited<ReturnType<NeoProvider["checkReadiness"]>>["neoX"];
     sessions: ReturnType<SessionStore["getStats"]>;
     toolCount: number;
   }> {
+    const readiness = await this.neo.checkReadiness();
+
     return {
-      neo: await this.neo.checkReadiness(),
+      neoN3: readiness.neoN3,
+      neoX: readiness.neoX,
       sessions: this.sessions.getStats(),
       toolCount: this.registry.listToolNames().length,
     };

@@ -32,11 +32,13 @@ export function isHash160(value: string): boolean {
 }
 
 export function isPositiveDecimal(value: string): boolean {
-  if (!positiveDecimalPattern.test(value)) {
+  const normalized = value.trim();
+
+  if (!positiveDecimalPattern.test(normalized)) {
     return false;
   }
 
-  return Number(value) > 0;
+  return /[1-9]/.test(normalized.replace(".", ""));
 }
 
 export function isNeoN3Address(value: string): boolean {
@@ -96,6 +98,26 @@ export const evmTransactionHashSchema = z
   .refine(
     (value) => evmTransactionHashPattern.test(value),
     "Invalid EVM transaction hash.",
+  )
+  .transform((value) => value.toLowerCase());
+
+export const evmHash32Schema = z
+  .string()
+  .trim()
+  .min(1, "Hash is required.")
+  .refine(
+    (value) => evmTransactionHashPattern.test(value),
+    "Invalid 32-byte EVM hash.",
+  )
+  .transform((value) => value.toLowerCase());
+
+export const evmBlockHashSchema = z
+  .string()
+  .trim()
+  .min(1, "Block hash is required.")
+  .refine(
+    (value) => evmTransactionHashPattern.test(value),
+    "Invalid EVM block hash.",
   )
   .transform((value) => value.toLowerCase());
 

@@ -8,13 +8,23 @@ export type NetworkAddressMap = Partial<Record<NeoNetwork, string>>;
 
 export interface ProviderReadiness {
   network: NeoNetwork;
+  enabled: boolean;
   configuredNetwork: string;
-  rpcUrl: string;
+  rpcUrlAlias?: string;
+  rpcHost?: string;
   rpcReachable: boolean;
   networkMagic?: number;
+  chainId?: number;
+  configuredChainId?: number;
   networkMatchesConfiguration: boolean;
   walletEnabled: boolean;
   walletAddress?: string;
+  reason?: string;
+}
+
+export interface ProviderReadinessStatus {
+  neoN3: ProviderReadiness;
+  neoX: ProviderReadiness;
 }
 
 export interface TokenMetadata {
@@ -163,7 +173,7 @@ export interface TransactionStatus {
   network: NeoNetwork;
   status: TransactionStatusState;
   summary: string;
-  blockNumber?: number;
+  blockNumber?: number | string;
   transaction?: Record<string, unknown> | null;
   applicationLog?: Record<string, unknown> | null;
 }
@@ -182,6 +192,7 @@ export interface TransactionLookup {
 export interface TransactionStatusLookup {
   hash: string;
   network: NeoNetwork;
+  rpcNetwork?: NeoXNetwork;
 }
 
 export interface NeoN3SwapQuoteInput {
@@ -267,6 +278,7 @@ export interface BroadcastResult {
   sender: string;
   summary: string;
   network: NeoNetwork;
+  rpcNetwork?: NeoXNetwork;
 }
 
 export interface ObservedTokenBalance {
@@ -409,5 +421,5 @@ export interface NeoProvider {
   ): Promise<PreparedTransaction>;
   signAndBroadcast(prepared: PreparedTransaction): Promise<BroadcastResult>;
   walletEnabled(network?: NeoNetwork): boolean;
-  checkReadiness(): Promise<ProviderReadiness>;
+  checkReadiness(): Promise<ProviderReadinessStatus>;
 }

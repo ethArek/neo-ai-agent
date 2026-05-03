@@ -529,14 +529,29 @@ describe("AgentRuntime", () => {
     });
   });
 
+  it("uses the resolved Neo X network name in block tool messages", async () => {
+    const provider = new FakeNeoProvider();
+    const runtime = createRuntime(provider);
+
+    const response = await runtime.executeTool({
+      tool: "neox_get_block",
+      arguments: {
+        tag: "latest",
+      },
+    });
+
+    expect(response.message).toBe("Loaded Neo X testnet block latest.");
+  });
+
   it("prepares and confirms a Neo X native GAS transfer", async () => {
     const provider = new FakeNeoProvider();
     const prepareSpy = jest.spyOn(provider, "prepareNeoXNativeTransfer");
     const signSpy = jest.spyOn(provider, "signAndBroadcast");
+    const statusSpy = jest.spyOn(provider, "getTransactionStatus");
     const runtime = createRuntime(provider);
 
     const prepared = await runtime.handleMessage(
-      `prepare 1 GAS on Neo X to ${provider.neoXRecipientAddress}`,
+      `prepare 1 GAS on Neo X testnet to ${provider.neoXRecipientAddress}`,
     );
 
     expect(prepared.tool).toBe("neox_prepare_native_transfer");
@@ -544,7 +559,7 @@ describe("AgentRuntime", () => {
     expect(prepareSpy).toHaveBeenCalledWith({
       amount: "1",
       to: provider.neoXRecipientAddress,
-      network: undefined,
+      network: "testnet",
     });
 
     const confirmed = await runtime.handleMessage(
@@ -553,9 +568,28 @@ describe("AgentRuntime", () => {
     );
 
     expect(signSpy).toHaveBeenCalledTimes(1);
+    expect(statusSpy).toHaveBeenCalledWith({
+      hash: provider.latestNeoXTxHash,
+      network: "neoX",
+      rpcNetwork: "testnet",
+    });
     expect(confirmed.requiresConfirmation).toBe(false);
     expect(confirmed.message).toContain("Submitted a Neo X");
     expect(confirmed.message).toContain(provider.latestNeoXTxHash);
+
+    statusSpy.mockClear();
+
+    const status = await runtime.handleMessage(
+      "check the status of my last transaction",
+      prepared.sessionId,
+    );
+
+    expect(status.tool).toBe("getLastTransactionStatus");
+    expect(statusSpy).toHaveBeenLastCalledWith({
+      hash: provider.latestNeoXTxHash,
+      network: "neoX",
+      rpcNetwork: "testnet",
+    });
   });
 
   it("refuses to auto-confirm a pending action when the LLM returns confirm_action for a non-confirm message", async () => {

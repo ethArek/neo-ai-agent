@@ -343,6 +343,65 @@ describe("PlannerService", () => {
     expect(plan.explanation).toContain("Neo N3 or Neo X");
   });
 
+  it("keeps script-hash read requests on Neo N3 when the prompt is explicit", async () => {
+    const plan = await createPlanner().plan(
+      "call balanceOf on script hash 0xd2a4cff31913016155e38e474a2c06d08be276cf",
+      createContext({
+        implementedNetworks: ["neoN3", "neoX"],
+      }),
+    );
+
+    expect(plan.tool).toBe("invokeNeoN3Read");
+    expect(plan.arguments).toMatchObject({
+      contractHash: "0xd2a4cff31913016155e38e474a2c06d08be276cf",
+      operation: "balanceOf",
+    });
+  });
+
+  it("keeps explicit Neo N3 0x contract prompts on Neo N3", async () => {
+    const plan = await createPlanner().plan(
+      "invoke balanceOf on 0xd2a4cff31913016155e38e474a2c06d08be276cf on Neo N3",
+      createContext({
+        implementedNetworks: ["neoN3", "neoX"],
+      }),
+    );
+
+    expect(plan.tool).toBe("invokeNeoN3Read");
+    expect(plan.arguments).toMatchObject({
+      contractHash: "0xd2a4cff31913016155e38e474a2c06d08be276cf",
+      operation: "balanceOf",
+    });
+  });
+
+  it("asks for clarification when a 0x contract prompt is chain-ambiguous", async () => {
+    const plan = await createPlanner().plan(
+      "invoke balanceOf on 0xd2a4cff31913016155e38e474a2c06d08be276cf",
+      createContext({
+        implementedNetworks: ["neoN3", "neoX"],
+      }),
+    );
+
+    expect(plan.tool).toBeNull();
+    expect(plan.intent).toBe("clarify_neo_network");
+    expect(plan.explanation).toContain("Neo N3 or Neo X");
+  });
+
+  it("keeps plain 0x transfer prompts on Neo X instead of asking for clarification", async () => {
+    const plan = await createPlanner().plan(
+      "prepare 1 GAS to 0xAA00000000000000000000000000000000000001",
+      createContext({
+        implementedNetworks: ["neoN3", "neoX"],
+      }),
+    );
+
+    expect(plan.tool).toBe("neox_prepare_native_transfer");
+    expect(plan.arguments).toMatchObject({
+      amount: "1",
+      to: "0xAA00000000000000000000000000000000000001",
+    });
+    expect(plan.intent).toBe("neox_prepare_native_transfer");
+  });
+
   it("ignores provider confirmation intents unless the raw user message is an explicit confirm phrase", async () => {
     const provider: LlmProvider = {
       async plan() {

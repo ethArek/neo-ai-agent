@@ -29,7 +29,7 @@ import type {
   NeoProvider,
   NetworkAddressMap,
   PreparedTransaction,
-  ProviderReadiness,
+  ProviderReadinessStatus,
   TokenBalance,
   TokenMetadata,
   TransactionDetails,
@@ -276,7 +276,7 @@ export class FakeNeoProvider implements NeoProvider {
         network: input.network,
         status: "confirmed",
         summary: `Neo X transaction ${input.hash} is confirmed.`,
-        blockNumber: 654,
+        blockNumber: "654",
         transaction: {
           hash: input.hash,
           from: this.neoXAddress,
@@ -780,16 +780,33 @@ export class FakeNeoProvider implements NeoProvider {
     return network === "neoN3" || network === "neoX";
   }
 
-  public async checkReadiness(): Promise<ProviderReadiness> {
+  public async checkReadiness(): Promise<ProviderReadinessStatus> {
     return {
-      network: "neoN3",
-      configuredNetwork: "mainnet",
-      rpcUrl: "https://n3.example.com",
-      rpcReachable: true,
-      networkMagic: 860_833_102,
-      networkMatchesConfiguration: true,
-      walletEnabled: true,
-      walletAddress: this.neoN3Address,
+      neoN3: {
+        network: "neoN3",
+        enabled: true,
+        configuredNetwork: "mainnet",
+        rpcUrlAlias: "NEO_N3_RPC_URL",
+        rpcHost: "n3.example.com",
+        rpcReachable: true,
+        networkMagic: 860_833_102,
+        networkMatchesConfiguration: true,
+        walletEnabled: true,
+        walletAddress: this.neoN3Address,
+      },
+      neoX: {
+        network: "neoX",
+        enabled: true,
+        configuredNetwork: "testnet",
+        rpcUrlAlias: "NEOX_TESTNET_RPC_URL",
+        rpcHost: "x.example.com",
+        rpcReachable: true,
+        chainId: this.getNeoXChainId("testnet"),
+        configuredChainId: this.getNeoXChainId("testnet"),
+        networkMatchesConfiguration: true,
+        walletEnabled: true,
+        walletAddress: this.neoXAddress,
+      },
     };
   }
 

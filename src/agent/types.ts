@@ -62,6 +62,7 @@ export interface BroadcastActivity {
   arguments: Record<string, unknown>;
   txHash: string;
   network: BroadcastResult["network"];
+  rpcNetwork?: BroadcastResult["rpcNetwork"];
   sender: string;
   summary: string;
   createdAt: string;

@@ -43,6 +43,7 @@ export const getRecentActionsTool: ToolDefinition<Input, RecentActionsResult> =
           status: await context.neo.getTransactionStatus({
             hash: activity.txHash,
             network: activity.network,
+            rpcNetwork: activity.rpcNetwork,
           }),
         })),
       );
